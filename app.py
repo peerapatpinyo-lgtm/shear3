@@ -1,3 +1,4 @@
+# main.py
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
@@ -24,9 +25,12 @@ with st.sidebar:
 props = SYS_H_BEAMS[section]
 c = core_calculation(L_input, Fy, E_gpa, props, method)
 
-# --- Display ---
+# --- Display Tabs ---
 t1, t2 = st.tabs(["📝 รายการคำนวณละเอียด (Detailed Sheet)", "📊 กราฟพฤติกรรม (Graph)"])
 
+# ==========================================
+# TAB 1: DETAILED CALCULATION
+# ==========================================
 with t1:
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
     st.markdown("---")
@@ -125,8 +129,55 @@ with t1:
         st.metric(label="Net Load (Exclude beam weight)", value=f"{net_w:,.0f} kg/m")
         st.caption(f"*หักน้ำหนักคาน {props['W']} kg/m ออกแล้ว")
 
+    st.markdown("---")
+
+    # === 6. TRANSITION DERIVATION ===
+    st.subheader("6. Derivation of Critical Lengths (ที่มาของระยะจุดเปลี่ยน)")
+    st.write("ระยะจุดเปลี่ยนคือระยะ $L$ ที่ความสามารถในการรับน้ำหนักของ 2 กรณีมีค่า **เท่ากันพอดี**")
+
+    with st.expander("ดูวิธีพิสูจน์สูตรและการคำนวณ (Click to Show Derivation)"):
+        # CASE 1
+        st.markdown("#### 6.1 จุดเปลี่ยน Shear $\leftrightarrow$ Moment ($L_{v-m}$)")
+        st.write("เกิดเมื่อน้ำหนักบรรทุกปลอดภัยจากแรงเฉือน ($w_s$) เท่ากับ โมเมนต์ ($w_m$)")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**1. ตั้งสมการ:**")
+            st.latex(r"\frac{2 V_{design}}{L} = \frac{8 M_{design}}{L^2}")
+            st.write("ย้ายข้างหาค่า $L$:")
+            st.latex(r"L = \frac{4 M_{design}}{V_{design}}")
+        with c2:
+            st.markdown("**2. แทนค่าจริง:**")
+            st.latex(rf"L = \frac{{4 \times {c['M_des']:,.0f}}}{{{c['V_des']:,.0f}}} \text{{ (cm)}}")
+            st.latex(rf"L = {c['L_vm']*100:,.2f} \text{{ cm}}")
+            st.success(f"แปลงเป็นเมตร = {c['L_vm']:.2f} m")
+
+        st.markdown("---")
+
+        # CASE 2
+        st.markdown("#### 6.2 จุดเปลี่ยน Moment $\leftrightarrow$ Deflection ($L_{m-d}$)")
+        st.write("เกิดเมื่อน้ำหนักบรรทุกปลอดภัยจากโมเมนต์ ($w_m$) เท่ากับ ระยะแอ่น ($w_d$)")
+        c3, c4 = st.columns(2)
+        with c3:
+            st.markdown("**1. ตั้งสมการ:**")
+            st.write("โดยที่ $w_d$ มาจาก $\delta = L/360$")
+            st.latex(r"\frac{8 M_{design}}{L^2} = \frac{384 E I (L/360)}{5 L^4}")
+            st.write("จัดรูปสมการหาค่า $L$:")
+            st.latex(r"L = \frac{384 E I}{14400 M_{design}}")
+        with c4:
+            st.markdown("**2. แทนค่าจริง:**")
+            st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{14400 \times {c['M_des']:,.0f}}}")
+            st.latex(rf"L = {c['L_md']*100:,.2f} \text{{ cm}}")
+            st.success(f"แปลงเป็นเมตร = {c['L_md']:.2f} m")
+
+    col_sum1, col_sum2 = st.columns(2)
+    col_sum1.info(f"**📍 จุดตัด Shear/Moment:**\n\n $L = {c['L_vm']:.2f}$ m")
+    col_sum2.info(f"**📍 จุดตัด Moment/Deflection:**\n\n $L = {c['L_md']:.2f}$ m")
+
+
+# ==========================================
+# TAB 2: BEHAVIOR GRAPH
+# ==========================================
 with t2:
-    # (โค้ดกราฟใช้ Logic เดิมได้ แต่ขอใส่ให้ครบเพื่อความสมบูรณ์)
     L_max = max(15, c['L_md']*1.2, L_input*1.5)
     x = np.linspace(0.5, L_max, 400)
     
@@ -145,9 +196,9 @@ with t2:
     fig.add_shape(type="rect", x0=c['L_md'], x1=L_max, y0=0, y1=y_lim, fillcolor="green", opacity=0.1, line_width=0)
     
     # Text
-    fig.add_annotation(x=c['L_vm']/2, y=y_lim*0.9, text="SHEAR", showarrow=False, font=dict(color="red"))
-    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, font=dict(color="orange"))
-    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim*0.9, text="DEFLECTION", showarrow=False, font=dict(color="green"))
+    fig.add_annotation(x=c['L_vm']/2, y=y_lim*0.9, text="SHEAR", showarrow=False, font=dict(color="red", weight="bold"))
+    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, font=dict(color="orange", weight="bold"))
+    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim*0.9, text="DEFLECTION", showarrow=False, font=dict(color="green", weight="bold"))
     
     # Lines
     fig.add_trace(go.Scatter(x=x, y=ys, name='Shear Limit', line=dict(color='red', dash='dash')))
@@ -155,13 +206,13 @@ with t2:
     fig.add_trace(go.Scatter(x=x, y=yd, name='Deflection Limit', line=dict(color='green', dash='dot')))
     fig.add_trace(go.Scatter(x=x, y=y_gov, name='Capacity', line=dict(color='black', width=4)))
     
-    # Point
+    # User Point
     fig.add_trace(go.Scatter(x=[L_input], y=[final_w], mode='markers+text', 
                              marker=dict(size=14, color='blue', symbol='x'),
                              text=[f"{final_w:,.0f}"], textposition="top right", name='Your Design'))
     
     fig.update_layout(title=f"Capacity Envelope: {section}", height=600, 
                       xaxis_title="Span Length (m)", yaxis_title="Load (kg/m)",
-                      yaxis_range=[0, final_w*2.5])
+                      yaxis_range=[0, final_w*2.5], hovermode="x unified")
     
     st.plotly_chart(fig, use_container_width=True)
