@@ -109,16 +109,18 @@ with tab_graph:
     
     fig = go.Figure()
     
-    # 1. Background Zones (Control Areas)
+    # 1. Background Zones (Control Areas) - FIXED ANNOTATION POSITION
     # Zone 1: Shear (0 to L_VM)
     fig.add_vrect(x0=0, x1=cal['L_VM_m'], fillcolor="rgba(255, 0, 0, 0.1)", line_width=0, 
-                  annotation_text="SHEAR CONTROL", annotation_position="top left")
+                  annotation_text="SHEAR", annotation_position="inside top")
+    
     # Zone 2: Moment (L_VM to L_MD)
     fig.add_vrect(x0=cal['L_VM_m'], x1=cal['L_MD_m'], fillcolor="rgba(255, 165, 0, 0.1)", line_width=0,
-                  annotation_text="MOMENT CONTROL", annotation_position="top center")
+                  annotation_text="MOMENT", annotation_position="inside top")
+    
     # Zone 3: Deflection (L_MD onwards)
     fig.add_vrect(x0=cal['L_MD_m'], x1=L_max, fillcolor="rgba(0, 128, 0, 0.1)", line_width=0,
-                  annotation_text="DEFLECTION CONTROL", annotation_position="top right")
+                  annotation_text="DEFLECTION", annotation_position="inside top")
 
     # 2. Curves
     fig.add_trace(go.Scatter(x=L_range, y=ys, name='Shear Limit', line=dict(color='red', dash='dash')))
