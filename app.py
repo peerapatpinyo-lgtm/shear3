@@ -48,8 +48,8 @@ SYS_H_BEAMS = {
     "H-900x300x16x28":  {"W": 243.0,"D": 900, "tw": 16,  "Ix": 404000, "Zx": 8980},
 }
 
-# --- 2. ฟังก์ชันคำนวณกราฟ ---
-def get_capacity_curves(lengths, Fy_ksc, E_gpa, props):
+# --- 2. ฟังก์ชันคำนวณ (Calculations) ---
+def calculate_capacities(lengths, Fy_ksc, E_gpa, props, method="ASD"):
     g = 9.81
     E = E_gpa * 1e9         
     Ix = props['Ix'] * 1e-8 
@@ -57,10 +57,27 @@ def get_capacity_curves(lengths, Fy_ksc, E_gpa, props):
     Aw = (props['D']/1000) * (props['tw']/1000) 
     Fy_pa = Fy_ksc * 98066.5
     
-    # Base Capacity (SI Units)
-    V_allow_N = 0.40 * Fy_pa * Aw 
-    M_allow_N = 0.60 * Fy_pa * Zx
+    # --- Strength Parameters (Nominal Strength) ---
+    # Shear: Vn = 0.6 * Fy * Aw (simplified for hot rolled)
+    Vn = 0.60 * Fy_pa * Aw
+    # Moment: Mn = Fy * Zx (Plastic Moment, assume compact)
+    Mn = Fy_pa * Zx
     
+    # --- Apply Factors based on Method ---
+    if method == "ASD":
+        # Allowable Stress Design (Using approximate Safety Factors common in EIT/AISC)
+        # Shear: Omega_v = 1.50 (Modern) or use 0.4Fy (Old EIT). Let's use 0.4Fy equivalent for consistency with old users
+        # V_allow approx 0.4 Fy Aw -> Vn / 1.5
+        V_limit = Vn / 1.50 
+        # Moment: Omega_b = 1.67
+        M_limit = Mn / 1.67 
+    else:
+        # LRFD (Load & Resistance Factor Design)
+        # Phi_v = 1.00 (Shear)
+        V_limit = 1.00 * Vn
+        # Phi_b = 0.90 (Flexure)
+        M_limit = 0.90 * Mn
+
     w_shear_list = []
     w_moment_list = []
     w_deflect_list = []
@@ -70,79 +87,84 @@ def get_capacity_curves(lengths, Fy_ksc, E_gpa, props):
             w_shear_list.append(None)
             continue
         
-        # Calculate Load (w) in N/m
-        w_s = (2 * V_allow_N) / L
-        w_m = (8 * M_allow_N) / (L**2)
+        # 1. Shear Limit (Uniform Load)
+        w_s = (2 * V_limit) / L
+        
+        # 2. Moment Limit (Uniform Load)
+        w_m = (8 * M_limit) / (L**2)
+        
+        # 3. Deflection Limit (Service Load Control)
+        # Note: Deflection is always checked at Service Load.
         delta_lim = L / 360.0
         w_d = (384 * E * Ix * delta_lim) / (5 * L**4)
         
-        # Convert to kg/m
         w_shear_list.append(w_s / g)   
         w_moment_list.append(w_m / g)
         w_deflect_list.append(w_d / g)
 
-    return np.array(w_shear_list), np.array(w_moment_list), np.array(w_deflect_list), V_allow_N
+    return np.array(w_shear_list), np.array(w_moment_list), np.array(w_deflect_list), V_limit, M_limit
 
 # --- Main App ---
-st.set_page_config(page_title="SYS H-Beam Analysis", layout="wide")
-st.title("🏗️ SYS H-Beam Capacity Analysis & Calculation")
+st.set_page_config(page_title="SYS H-Beam: ASD vs LRFD", layout="wide")
+st.title("🏗️ SYS H-Beam Design: ASD vs LRFD")
 
 # Sidebar
-st.sidebar.header("1. ตัวแปรตั้งต้น (Input)")
-section_name = st.sidebar.selectbox("เลือกหน้าตัด (Section)", list(SYS_H_BEAMS.keys()))
-props = SYS_H_BEAMS[section_name]
-Fy = st.sidebar.number_input("Yield Strength (Fy) [ksc]", value=2400)
-E_val_gpa = st.sidebar.number_input("Elastic Modulus (E) [GPa]", value=200)
+st.sidebar.header("1. เลือกวิธีออกแบบ (Design Method)")
+method = st.sidebar.radio("Method:", ["ASD (Allowable Stress)", "LRFD (Load & Resistance Factor)"])
+if method == "ASD":
+    st.sidebar.info("📌 **ASD:** แสดงผลเป็น **Service Load** (ยังไม่คูณ Load Factor)\n\nใช้ Safety Factor ($\Omega$)")
+else:
+    st.sidebar.info("📌 **LRFD:** แสดงผลเป็น **Factored Load** ($w_u$)\n\nใช้ Resistance Factor ($\phi$)")
 
 st.sidebar.markdown("---")
-st.sidebar.header("2. ตั้งค่าการแสดงผล")
-L_input = st.sidebar.slider("ความยาวช่วงคาน L (เมตร)", min_value=1.0, max_value=24.0, value=6.0, step=0.1)
-view_mode = st.sidebar.radio("มุมมองกราฟ (Y-Axis):", ["Uniform Load (kg/m)", "Max Shear Force (kg)"])
+st.sidebar.header("2. ตัวแปรตั้งต้น")
+section_name = st.sidebar.selectbox("เลือกหน้าตัด (Section)", list(SYS_H_BEAMS.keys()))
+props = SYS_H_BEAMS[section_name]
+Fy = st.sidebar.number_input("Fy (ksc)", value=2400)
+E_val_gpa = st.sidebar.number_input("E (GPa)", value=200)
+L_input = st.sidebar.slider("ความยาว L (m)", 1.0, 24.0, 6.0, 0.1)
+
+# Calculation
+max_graph_len = max(24.0, L_input * 1.5)
+L_range = np.linspace(0.5, max_graph_len, 300)
+w_s, w_m, w_d, V_lim_N, M_lim_N = calculate_capacities(L_range, Fy, E_val_gpa, props, method)
+
+# Net Capacity (Subtract Beam Weight only for Service Load concept mostly, but we do for both to show Net Cap)
+w_safe = np.minimum(np.minimum(w_s, w_m), w_d) - props['W']
+w_safe = np.maximum(w_safe, 0)
+w_total_safe = w_safe + props['W']
+
+# Y-Axis Title
+if method == "ASD":
+    y_title = "Allowable Service Load (kg/m)"
+    load_type_text = "Service Load ($D+L$)"
+else:
+    y_title = "Design Factored Load $w_u$ (kg/m)"
+    load_type_text = "Factored Load ($1.2D+1.6L$)"
 
 # Tabs
-tab1, tab2 = st.tabs(["📊 กราฟวิเคราะห์ (Chart)", "📝 รายการคำนวณ (Calculation Sheet)"])
+tab1, tab2 = st.tabs(["📊 กราฟเปรียบเทียบ (Chart)", f"📝 รายการคำนวณ ({method})"])
 
-# ================= TAB 1: GRAPH (Full Feature) =================
+# --- TAB 1: CHART ---
 with tab1:
-    max_graph_len = max(24.0, L_input * 1.5)
-    L_range = np.linspace(0.5, max_graph_len, 300)
-    w_s, w_m, w_d, V_allow_N = get_capacity_curves(L_range, Fy, E_val_gpa, props)
-    V_allow_kg = V_allow_N / 9.81
-    
-    # Base Safe Load (kg/m)
-    w_safe = np.minimum(np.minimum(w_s, w_m), w_d) - props['W']
-    w_safe = np.maximum(w_safe, 0)
-    w_total_safe = w_safe + props['W']
-
-    # --- Convert Graph Data based on View Mode ---
-    if view_mode == "Max Shear Force (kg)":
-        # Convert w (kg/m) to Shear Force V (kg) -> V = wL/2
-        y_s = np.full_like(L_range, V_allow_kg) # Shear Limit is constant force
-        y_m = (w_m * L_range) / 2
-        y_d = (w_d * L_range) / 2
-        y_safe = (w_total_safe * L_range) / 2
-        y_title = "Max Shear Force / Reaction (kg)"
-    else:
-        # Keep as Load w (kg/m)
-        y_s = w_s
-        y_m = w_m
-        y_d = w_d
-        y_safe = w_total_safe
-        y_title = "Total Uniform Load Capacity (kg/m)"
-
-    # Plot
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=L_range, y=y_s, name='Shear Limit', line=dict(color='red', dash='dash')))
-    fig.add_trace(go.Scatter(x=L_range, y=y_m, name='Moment Limit', line=dict(color='orange', dash='dash')))
-    fig.add_trace(go.Scatter(x=L_range, y=y_d, name='Deflection Limit', line=dict(color='green', dash='dash')))
-    fig.add_trace(go.Scatter(x=L_range, y=y_safe, name='Safe Capacity', line=dict(color='black', width=4)))
+    fig.add_trace(go.Scatter(x=L_range, y=w_s, name=f'Shear Strength ({method})', line=dict(color='red', dash='dash')))
+    fig.add_trace(go.Scatter(x=L_range, y=w_m, name=f'Moment Strength ({method})', line=dict(color='orange', dash='dash')))
+    
+    # Deflection Note for LRFD
+    def_name = 'Deflection Limit (L/360)'
+    if method == "LRFD":
+        def_name += " [Check at Service Load]"
+    
+    fig.add_trace(go.Scatter(x=L_range, y=w_d, name=def_name, line=dict(color='green', dash='dot')))
+    fig.add_trace(go.Scatter(x=L_range, y=w_total_safe, name=f'Design Capacity ({method})', line=dict(color='black', width=4)))
     
     # Current Point
     current_idx = (np.abs(L_range - L_input)).argmin()
-    fig.add_trace(go.Scatter(x=[L_input], y=[y_safe[current_idx]], mode='markers', marker=dict(size=12, color='blue'), name='Current L'))
-    
-    # Color Zones (Highlights)
-    governing_idx = np.argmin([y_s, y_m, y_d], axis=0)
+    fig.add_trace(go.Scatter(x=[L_input], y=[w_total_safe[current_idx]], mode='markers', marker=dict(size=12, color='blue'), name='Current L'))
+
+    # Highlights
+    governing_idx = np.argmin([w_s, w_m, w_d], axis=0)
     colors = ['rgba(255, 0, 0, 0.1)', 'rgba(255, 165, 0, 0.1)', 'rgba(0, 128, 0, 0.1)']
     labels = ['Shear Control', 'Moment Control', 'Deflection Control']
     start_idx = 0
@@ -154,77 +176,71 @@ with tab1:
             fig.add_vrect(x0=x0, x1=x1, fillcolor=colors[zone_type], opacity=1, layer="below", line_width=0, annotation_text=labels[zone_type], annotation_position="inside top")
             start_idx = i
 
-    fig.update_layout(height=500, xaxis_title="Length (m)", yaxis_title=y_title, hovermode="x unified")
-    fig.update_yaxes(range=[0, y_safe[current_idx]*2.5]) # Zoom to relevant range
+    fig.update_layout(height=500, xaxis_title="Length (m)", yaxis_title=y_title, hovermode="x unified", title=f"Capacity Curve ({method})")
     st.plotly_chart(fig, use_container_width=True)
 
-
-# ================= TAB 2: FULL CALCULATION (ละเอียด) =================
+# --- TAB 2: CALCULATION SHEET ---
 with tab2:
-    st.markdown(f"## 📝 รายการคำนวณโครงสร้าง (Structural Calculation)")
-    st.markdown(f"**Project:** Beam Check | **Section:** {section_name} | **Span:** {L_input:.2f} m")
+    st.markdown(f"## 📝 รายการคำนวณ ({method} Method)")
+    st.markdown(f"**Section:** {section_name} | **Span:** {L_input} m")
     
-    # 1. Variables
-    st.markdown("### 1. ข้อมูลการออกแบบ (Design Data)")
+    # Constants
     E_ksc = (E_val_gpa * 1e9) / 98066.5 
-    D_cm = props['D'] / 10
-    tw_cm = props['tw'] / 10
-    Aw_cm2 = D_cm * tw_cm
-    Ix_cm4 = props['Ix']
+    Aw_cm2 = (props['D'] * props['tw']) / 100
     Zx_cm3 = props['Zx']
-    L_cm = L_input * 100
     
-    col_var1, col_var2 = st.columns(2)
-    with col_var1:
-        st.write(f"- $F_y$ = **{Fy:,.0f}** ksc")
-        st.write(f"- $E$ = {E_val_gpa} GPa $\\approx$ **{E_ksc:,.0f}** ksc")
-    with col_var2:
-        st.write(f"- $D$ = **{D_cm:.1f}** cm, $t_w$ = **{tw_cm:.2f}** cm")
-        st.write(f"- $A_w$ = **{Aw_cm2:.2f}** cm²")
-        st.write(f"- $I_x$ = **{Ix_cm4:,.0f}** cm⁴, $Z_x$ = **{Zx_cm3:,.0f}** cm³")
-        st.write(f"- Weight = **{props['W']}** kg/m")
+    # Retrieve calculated values at specific L
+    idx = (np.abs(L_range - L_input)).argmin()
+    res_w_s = w_s[idx]
+    res_w_m = w_m[idx]
+    res_w_d = w_d[idx]
+
+    # --- 1. Shear Calculation ---
+    st.markdown("### 1. แรงเฉือน (Shear Check)")
+    st.write(f"Nominal Shear Strength ($V_n$) = $0.6 F_y A_w$")
+    if method == "ASD":
+        st.latex(r"\Omega_v = 1.50 \quad (\text{Safety Factor})")
+        st.latex(rf"V_{{allow}} = \frac{{V_n}}{{\Omega_v}} = \frac{{0.6 \times {Fy} \times {Aw_cm2:.2f}}}{{1.50}} = \mathbf{{{V_lim_N/9.81:,.0f}}} \text{{ kg}}")
+        st.latex(rf"w_{{shear}} = \frac{{2 V_{{allow}}}}{{L}} = \mathbf{{{res_w_s:,.0f}}} \text{{ kg/m}}")
+    else:
+        st.latex(r"\phi_v = 1.00 \quad (\text{Resistance Factor})")
+        st.latex(rf"V_u = \phi_v V_n = 1.00 \times (0.6 \times {Fy} \times {Aw_cm2:.2f}) = \mathbf{{{V_lim_N/9.81:,.0f}}} \text{{ kg}}")
+        st.latex(rf"w_{{u,shear}} = \frac{{2 V_u}}{{L}} = \mathbf{{{res_w_s:,.0f}}} \text{{ kg/m}}")
 
     st.markdown("---")
 
-    # 2. SHEAR CHECK
-    st.markdown("### 2. แรงเฉือน (Shear Capacity)")
-    V_allow_kg = 0.40 * Fy * Aw_cm2
-    w_shear_load = (2 * V_allow_kg) / L_input
-    
-    st.latex(rf"V_{{allow}} = 0.40 \times {Fy} \times {Aw_cm2:.2f} = \mathbf{{{V_allow_kg:,.0f}}} \text{{ kg}}")
-    st.latex(rf"w_s = \frac{{2 \times V_{{allow}}}}{{L}} = \frac{{2 \times {V_allow_kg:,.0f}}}{{{L_input}}} = \mathbf{{{w_shear_load:,.0f}}} \text{{ kg/m}}")
-    
-    st.markdown("---")
-
-    # 3. MOMENT CHECK
-    st.markdown("### 3. โมเมนต์ดัด (Moment Capacity)")
-    M_allow_kgcm = 0.60 * Fy * Zx_cm3
-    M_allow_kgm = M_allow_kgcm / 100
-    w_moment_load = (8 * M_allow_kgm) / (L_input**2)
-    
-    st.latex(rf"M_{{allow}} = 0.60 \times {Fy} \times {Zx_cm3:.1f} = {M_allow_kgcm:,.0f} \text{{ kg-cm}} = {M_allow_kgm:,.0f} \text{{ kg-m}}")
-    st.latex(rf"w_m = \frac{{8 \times M_{{allow}}}}{{L^2}} = \frac{{8 \times {M_allow_kgm:,.0f}}}{{{L_input}^2}} = \mathbf{{{w_moment_load:,.0f}}} \text{{ kg/m}}")
+    # --- 2. Moment Calculation ---
+    st.markdown("### 2. โมเมนต์ดัด (Moment Check)")
+    st.write(f"Nominal Moment Strength ($M_n$) = $F_y Z_x$ (Plastic Moment)")
+    if method == "ASD":
+        st.latex(r"\Omega_b = 1.67 \quad (\text{Safety Factor})")
+        st.latex(rf"M_{{allow}} = \frac{{M_n}}{{\Omega_b}} = \frac{{{Fy} \times {Zx_cm3}}}{{1.67}} = \mathbf{{{(M_lim_N/9.81)/100:,.0f}}} \text{{ kg-m}}")
+        st.latex(rf"w_{{moment}} = \frac{{8 M_{{allow}}}}{{L^2}} = \mathbf{{{res_w_m:,.0f}}} \text{{ kg/m}}")
+    else:
+        st.latex(r"\phi_b = 0.90 \quad (\text{Resistance Factor})")
+        st.latex(rf"M_u = \phi_b M_n = 0.90 \times ({Fy} \times {Zx_cm3}) = \mathbf{{{(M_lim_N/9.81)/100:,.0f}}} \text{{ kg-m}}")
+        st.latex(rf"w_{{u,moment}} = \frac{{8 M_u}}{{L^2}} = \mathbf{{{res_w_m:,.0f}}} \text{{ kg/m}}")
 
     st.markdown("---")
 
-    # 4. DEFLECTION CHECK
-    st.markdown("### 4. การแอ่นตัว (Deflection Capacity)")
-    delta_allow_cm = L_cm / 360
-    w_d_kg_cm = (384 * E_ksc * Ix_cm4 * delta_allow_cm) / (5 * (L_cm**4))
-    w_deflect_load = w_d_kg_cm * 100 
-    
-    st.latex(rf"\delta_{{allow}} = L/360 = {delta_allow_cm:.2f} \text{{ cm}}")
-    st.latex(rf"w_d = \frac{{384 E I \delta}}{{5 L^4}} = \frac{{384 \cdot {E_ksc:.0f} \cdot {Ix_cm4} \cdot {delta_allow_cm:.2f}}}{{5 \cdot {L_cm:.0f}^4}}")
-    st.latex(rf"= {w_d_kg_cm:.2f} \text{{ kg/cm}} \Rightarrow \mathbf{{{w_deflect_load:,.0f}}} \text{{ kg/m}}")
-    
+    # --- 3. Deflection Calculation ---
+    st.markdown("### 3. การแอ่นตัว (Deflection Check)")
+    st.warning("⚠️ การตรวจสอบการแอ่นตัวใช้ **Service Load** เสมอ (ไม่ว่าออกแบบด้วย ASD หรือ LRFD)")
+    st.latex(rf"\delta_{{allow}} = L/360")
+    st.latex(rf"w_{{deflect}} = \mathbf{{{res_w_d:,.0f}}} \text{{ kg/m}}")
+
     st.markdown("---")
+
+    # --- 4. Conclusion ---
+    st.markdown("### 4. สรุปผล (Conclusion)")
+    vals = {'Shear': res_w_s, 'Moment': res_w_m, 'Deflection': res_w_d}
+    gov = min(vals, key=vals.get)
+    capacity = vals[gov]
     
-    # 5. CONCLUSION
-    st.markdown("### 5. สรุปผล (Conclusion)")
-    vals = {'Shear': w_shear_load, 'Moment': w_moment_load, 'Deflection': w_deflect_load}
-    min_case = min(vals, key=vals.get)
-    total_safe = vals[min_case]
-    net_safe = max(total_safe - props['W'], 0)
-    
-    st.info(f"👉 **Governing Case:** {min_case} Control (Limit = {total_safe:,.0f} kg/m)")
-    st.success(f"✅ **Safe Net Load (รับน้ำหนักบรรทุกปลอดภัยสุทธิ): {net_safe:,.0f} kg/m**")
+    st.info(f"👉 **Governing Case:** {gov} Control")
+    if method == "ASD":
+        st.success(f"✅ **Safe Service Load (Total): {capacity:,.0f} kg/m**")
+        st.write(f"(หักน้ำหนักคาน {props['W']} kg/m เหลือรับน้ำหนักจรสุทธิ: **{max(capacity-props['W'],0):,.0f}** kg/m)")
+    else:
+        st.success(f"✅ **Design Factored Load ($w_u$ Total): {capacity:,.0f} kg/m**")
+        st.caption("**Note:** สำหรับ LRFD นี่คือน้ำหนักบรรทุกประลัย ($1.2D + 1.6L$) ที่รับได้สูงสุด")
