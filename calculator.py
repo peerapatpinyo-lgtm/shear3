@@ -6,7 +6,7 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method):
     L_cm = L_m * 100.0
     Aw = (props['D']/10.0) * (props['tw']/10.0)
     
-    # --- 2. Nominal Capacity (ต้องมีส่วนนี้เพื่อส่งค่ากลับไปแสดงผล) ---
+    # --- 2. Nominal Capacity (Return ค่าพวกนี้เพื่อใช้แสดงวิธีทำ) ---
     # Shear: Vn = 0.6 * Fy * Aw
     Vn = 0.60 * Fy_ksc * Aw 
     # Moment: Mn = Fy * Zx
@@ -15,23 +15,23 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method):
     # --- 3. Design Factor (ASD vs LRFD) ---
     if method == "ASD":
         omega_v, omega_b = 1.50, 1.67
-        phi_v, phi_b = 0.0, 0.0 # ไม่ใช้ใน ASD ใส่ค่า 0 กัน Error
+        phi_v, phi_b = 0.0, 0.0 # ไม่ใช้ใน ASD ใส่ 0 กัน Error
         
         V_des = Vn / omega_v
         M_des = Mn / omega_b
         
-        # Text for report
+        # Text string สำหรับ LaTeX
         txt_v_method = r"V_{design} = \frac{V_n}{\Omega_v}"
         txt_m_method = r"M_{design} = \frac{M_n}{\Omega_b}"
         
     else: # LRFD
         phi_v, phi_b = 1.00, 0.90
-        omega_v, omega_b = 1.0, 1.0 # ไม่ใช้ใน LRFD ใส่ค่า 1 กัน Error
+        omega_v, omega_b = 1.0, 1.0 # ไม่ใช้ใน LRFD ใส่ 1 กัน Error
         
         V_des = Vn * phi_v
         M_des = Mn * phi_b
         
-        # Text for report
+        # Text string สำหรับ LaTeX
         txt_v_method = r"V_{design} = \phi_v V_n"
         txt_m_method = r"M_{design} = \phi_b M_n"
         
@@ -48,16 +48,14 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method):
     L_vm_cm = (4 * M_des) / V_des
     L_md_cm = (384 * E_ksc * props['Ix']) / (14400 * M_des)
     
-    # Return Dictionary (ต้องครบตามที่ main.py เรียกใช้)
+    # Return Dictionary (รวมตัวแปรทุกตัวที่ต้องใช้ใน Report)
     return {
         # Inputs & Props
         "Aw": Aw, "Ix": props['Ix'], "Zx": props['Zx'], 
         "L_cm": L_cm, "E_ksc": E_ksc,
         
-        # Nominal (ตัวที่ Error คือบรรทัดนี้ครับ)
+        # Nominal & Factors
         "Vn": Vn, "Mn": Mn,
-        
-        # Factors
         "omega_v": omega_v, "omega_b": omega_b,
         "phi_v": phi_v, "phi_b": phi_b,
         
