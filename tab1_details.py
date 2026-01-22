@@ -3,18 +3,42 @@ import streamlit as st
 def render_tab1(c, props, method, Fy, section):
     """
     Function to render Tab 1: Detailed Calculation Sheet (English Version)
+    With Data Source Tracing
     """
     
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
+    
+    # === [NEW] DATA SOURCE TRACING ===
+    # แสดงกล่องสรุปว่าค่าไหนมาจากไหน
+    with st.expander("ℹ️ Data Sources & Input Parameters (ที่มาของข้อมูล)", expanded=False):
+        ds_c1, ds_c2 = st.columns(2)
+        with ds_c1:
+            st.markdown("**🔵 User Inputs (ค่าที่คุณกำหนด):**")
+            st.code(f"Design Method : {method}\n"
+                    f"Yield Strength: {Fy} ksc\n"
+                    f"Modulus (E)   : {c['E_ksc']/10197.162:.0f} GPa\n"
+                    f"Span Length   : {c['L_cm']/100:.2f} m")
+        with ds_c2:
+            st.markdown("**🗂️ Database Constants (ค่าจากฐานข้อมูล):**")
+            st.caption(f"Retrieved from `database.SYS_H_BEAMS` key: `{section}`")
+            st.code(f"Depth (D) : {props['D']} mm\n"
+                    f"Web (tw)  : {props['tw']} mm\n"
+                    f"Weight    : {props['W']} kg/m\n"
+                    f"Inertia   : {props['Ix']} cm4")
+    
     st.markdown("---")
 
     # === 1. PROPERTIES ===
+    # เพิ่ม Label บอกชัดเจนว่าดึงมาจาก Database
     st.markdown("#### 1. Geometric Properties")
+    st.caption(f"📍 Values retrieved from standard section table for **{section}**")
+    
     c1, c2, c3, c4 = st.columns(4)
-    c1.write(f"**Depth (D):** {props['D']} mm")
-    c2.write(f"**Web (tw):** {props['tw']} mm")
-    c3.write(f"**Web Area ($A_w$):** {c['Aw']:.2f} cm²")
-    c4.write(f"**Plastic Modulus ($Z_x$):** {props['Zx']:,} cm³")
+    c1.metric("Depth (D)", f"{props['D']} mm", delta="Database", delta_color="off")
+    c2.metric("Web (tw)", f"{props['tw']} mm", delta="Database", delta_color="off")
+    c3.metric("Web Area (Aw)", f"{c['Aw']:.2f} cm²", delta="Calculated", delta_color="off") # Aw คำนวณใน code
+    c4.metric("Modulus (Zx)", f"{props['Zx']:,} cm³", delta="Database", delta_color="off")
+    
     st.markdown("---")
 
     # === 2. SHEAR ===
@@ -24,21 +48,22 @@ def render_tab1(c, props, method, Fy, section):
     with col_s1:
         st.markdown("**Step 2.1: Nominal Shear Strength ($V_n$)**")
         st.latex(r"V_n = 0.60 \times F_y \times A_w")
-        st.latex(rf"V_n = 0.60 \times {Fy} \times {c['Aw']:.2f}")
-        st.latex(rf"\therefore V_n = \mathbf{{{c['Vn']:,.0f}}} \text{{ kg}}")
+        st.write(f"- $F_y$ (Input) = {Fy} ksc")
+        st.write(f"- $A_w$ (Calc) = {c['Aw']:.2f} cm²")
+        st.latex(rf"\therefore V_n = 0.60 \times {Fy} \times {c['Aw']:.2f} = \mathbf{{{c['Vn']:,.0f}}} \text{{ kg}}")
         
     with col_s2:
         st.markdown("**Step 2.2: Design Shear Strength ($V_{design}$)**")
         st.latex(c['txt_v_method'])
         if method == "ASD":
+             st.write(f"Using Safety Factor $\Omega_v = {c['omega_v']:.2f}$ (AISC ASD)")
              st.latex(rf"V_{{design}} = \frac{{{c['Vn']:,.0f}}}{{{c['omega_v']:.2f}}}")
         else:
+             st.write(f"Using Resistance Factor $\phi_v = {c['phi_v']:.2f}$ (AISC LRFD)")
              st.latex(rf"V_{{design}} = {c['phi_v']:.2f} \times {c['Vn']:,.0f}")
         st.latex(rf"\therefore V_{{design}} = \mathbf{{{c['V_des']:,.0f}}} \text{{ kg}}")
     
     st.markdown("**Step 2.3: Safe Uniform Load ($w_s$)**")
-    st.write("Convert to uniform load using shear formula $V = wL/2$")
-    st.latex(rf"w_s = \frac{{2 V_{{design}}}}{{L}} \times 100 (\text{{unit conv.}})")
     st.latex(rf"w_s = \frac{{2 \times {c['V_des']:,.0f}}}{{{c['L_cm']:.0f}}} \times 100 = \mathbf{{{c['ws']:,.0f}}} \text{{ kg/m}}")
     st.markdown("---")
 
@@ -49,32 +74,35 @@ def render_tab1(c, props, method, Fy, section):
     with col_m1:
         st.markdown("**Step 3.1: Nominal Moment Strength ($M_n$)**")
         st.latex(r"M_n = F_y \times Z_x")
-        st.latex(rf"M_n = {Fy} \times {props['Zx']}")
-        st.latex(rf"\therefore M_n = \mathbf{{{c['Mn']:,.0f}}} \text{{ kg-cm}}")
+        st.write(f"- $F_y$ (Input) = {Fy} ksc")
+        st.write(f"- $Z_x$ (Database) = {props['Zx']:,} cm³")
+        st.latex(rf"\therefore M_n = {Fy} \times {props['Zx']} = \mathbf{{{c['Mn']:,.0f}}} \text{{ kg-cm}}")
         
     with col_m2:
         st.markdown("**Step 3.2: Design Moment Strength ($M_{design}$)**")
         st.latex(c['txt_m_method'])
         if method == "ASD":
+             st.write(f"Using Safety Factor $\Omega_b = {c['omega_b']:.2f}$ (AISC ASD)")
              st.latex(rf"M_{{design}} = \frac{{{c['Mn']:,.0f}}}{{{c['omega_b']:.2f}}}")
         else:
+             st.write(f"Using Resistance Factor $\phi_b = {c['phi_b']:.2f}$ (AISC LRFD)")
              st.latex(rf"M_{{design}} = {c['phi_b']:.2f} \times {c['Mn']:,.0f}")
         st.latex(rf"\therefore M_{{design}} = \mathbf{{{c['M_des']:,.0f}}} \text{{ kg-cm}}")
 
     st.markdown("**Step 3.3: Safe Uniform Load ($w_m$)**")
-    st.write("Convert to uniform load using moment formula $M = wL^2/8$")
-    st.latex(rf"w_m = \frac{{8 M_{{design}}}}{{L^2}} \times 100")
     st.latex(rf"w_m = \frac{{8 \times {c['M_des']:,.0f}}}{{{c['L_cm']:.0f}^2}} \times 100 = \mathbf{{{c['wm']:,.0f}}} \text{{ kg/m}}")
     st.markdown("---")
 
     # === 4. DEFLECTION ===
     st.subheader("4. Deflection Control")
     st.write(f"Allowable Deflection Limit ($L/360$):")
-    st.latex(rf"\delta_{{allow}} = \frac{{{c['L_cm']:.0f}}}{{360}} = {c['delta']:.2f} \text{{ cm}}")
+    st.latex(rf"\delta_{{allow}} = \frac{{{c['L_cm']:.0f} \text{{ (User Input)}}}}{{360}} = {c['delta']:.2f} \text{{ cm}}")
     
     st.markdown("**Step 4.1: Convert to Safe Uniform Load ($w_d$)**")
-    st.write("Calculate load required to reach allowable deflection using $\delta = \\frac{5wL^4}{384EI}$")
-    st.latex(r"w_d = \frac{384 E I \delta_{allow}}{5 L^4} \times 100")
+    st.write("Using Properties from Database:")
+    st.write(f"- $I_x$ (Inertia) = {props['Ix']:,} cm⁴")
+    st.write(f"- $E$ (Modulus) = {c['E_ksc']:,.0f} ksc")
+    
     st.latex(rf"w_d = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,} \times {c['delta']:.2f}}}{{5 \times {c['L_cm']:.0f}^4}} \times 100")
     st.latex(rf"\therefore w_d = \mathbf{{{c['wd']:,.0f}}} \text{{ kg/m}}")
     
@@ -100,7 +128,7 @@ def render_tab1(c, props, method, Fy, section):
     with res_col2:
         st.success(f"✅ **Safe Net Load Capacity:**")
         st.metric(label="Net Load (Excluding Beam Weight)", value=f"{net_w:,.0f} kg/m")
-        st.caption(f"*Beam self-weight of {props['W']} kg/m has been deducted.")
+        st.caption(f"*Beam self-weight ({props['W']} kg/m) from database deducted.")
 
     st.markdown("---")
 
