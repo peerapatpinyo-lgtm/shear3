@@ -3,7 +3,8 @@ import numpy as np
 import plotly.graph_objects as go
 from database import SYS_H_BEAMS
 from calculator import core_calculation
-from tab1_details import render_tab1  # <--- Import ไฟล์ใหม่เข้ามา
+from tab1_details import render_tab1
+from tab3_capacity import render_tab3  # <--- Import ไฟล์ใหม่เข้ามา
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -24,23 +25,23 @@ with st.sidebar:
 # --- Process ---
 props = SYS_H_BEAMS[section]
 c = core_calculation(L_input, Fy, E_gpa, props, method)
-final_w = min(c['ws'], c['wm'], c['wd']) # คำนวณค่านี้ไว้ใช้ใน Tab 2 ด้วย
+final_w = min(c['ws'], c['wm'], c['wd'])
 
 # --- Display Tabs ---
-t1, t2 = st.tabs(["📝 รายการคำนวณละเอียด (Detailed Sheet)", "📊 กราฟพฤติกรรม (Graph)"])
+# เพิ่ม Tab 3 เข้าไปใน List
+t1, t2, t3 = st.tabs([
+    "📝 รายการคำนวณ (Calculation)", 
+    "📊 กราฟพฤติกรรม (Graph)", 
+    "📋 ตารางรับน้ำหนัก (Capacity Table)"
+])
 
-# ==========================================
-# TAB 1: DETAILED CALCULATION (Refactored)
-# ==========================================
+# === TAB 1 ===
 with t1:
-    # เรียกใช้ฟังก์ชันจากไฟล์ tab1_details.py
-    # ส่งค่าที่จำเป็นเข้าไปให้ครบ
     render_tab1(c, props, method, Fy, section)
 
-# ==========================================
-# TAB 2: BEHAVIOR GRAPH (ยังอยู่ที่เดิม)
-# ==========================================
+# === TAB 2 (Graph) ===
 with t2:
+    # (โค้ดกราฟเดิม ไม่ต้องแก้ไข)
     L_max = max(15, c['L_md']*1.2, L_input*1.5)
     x = np.linspace(0.5, L_max, 400)
     
@@ -69,7 +70,6 @@ with t2:
     fig.add_trace(go.Scatter(x=x, y=yd, name='Deflection Limit', line=dict(color='green', dash='dot')))
     fig.add_trace(go.Scatter(x=x, y=y_gov, name='Capacity', line=dict(color='black', width=4)))
     
-    # User Point
     fig.add_trace(go.Scatter(x=[L_input], y=[final_w], mode='markers+text', 
                              marker=dict(size=14, color='blue', symbol='x'),
                              text=[f"{final_w:,.0f}"], textposition="top right", name='Your Design'))
@@ -79,3 +79,8 @@ with t2:
                       yaxis_range=[0, final_w*2.5], hovermode="x unified")
     
     st.plotly_chart(fig, use_container_width=True)
+
+# === TAB 3 (New Capacity Table) ===
+with t3:
+    # เรียกใช้ function จากไฟล์ใหม่
+    render_tab3(props, method, Fy, E_gpa, section)
