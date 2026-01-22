@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 
-# --- 1. SETUP ---
+# --- 1. CONFIGURATION ---
 st.set_page_config(page_title="SYS H-Beam: Master Analysis", layout="wide")
 
 # --- 2. DATABASE ---
@@ -35,13 +35,11 @@ def master_calculation(L_m, Fy_ksc, E_gpa, props, method):
         val_v, val_b = 1.50, 1.67
         V_cap = Vn / val_v
         M_cap = Mn / val_b
-        op_v, op_b = "หาร", "หาร" # For explanation text
     else: # LRFD
         factor_v_sym, factor_b_sym = r"\phi_v", r"\phi_b"
         val_v, val_b = 1.00, 0.90
         V_cap = Vn * val_v
         M_cap = Mn * val_b
-        op_v, op_b = "คูณ", "คูณ"
 
     # 3. Load Capacities (w) at Current Span
     ws = (2 * V_cap / L_cm) * 100
@@ -67,8 +65,7 @@ def master_calculation(L_m, Fy_ksc, E_gpa, props, method):
         "L_vm_m": L_vm_cm / 100.0,
         "L_md_m": L_md_cm / 100.0,
         "factor_v_sym": factor_v_sym, "val_v": val_v,
-        "factor_b_sym": factor_b_sym, "val_b": val_b,
-        "op_v": op_v, "op_b": op_b
+        "factor_b_sym": factor_b_sym, "val_b": val_b
     }
 
 # --- 4. UI ---
@@ -106,10 +103,15 @@ with tab_graph:
     
     fig = go.Figure()
     
-    # Zones
-    fig.add_vrect(x0=0, x1=cal['L_vm_m'], fillcolor="rgba(255,0,0,0.1)", line_width=0, annotation_text="SHEAR", annotation_position="top left")
-    fig.add_vrect(x0=cal['L_vm_m'], x1=cal['L_md_m'], fillcolor="rgba(255,165,0,0.1)", line_width=0, annotation_text="MOMENT", annotation_position="top center")
-    fig.add_vrect(x0=cal['L_md_m'], x1=L_max, fillcolor="rgba(0,128,0,0.1)", line_width=0, annotation_text="DEFLECTION", annotation_position="top right")
+    # Zones - FIXED ANNOTATION POSITION
+    fig.add_vrect(x0=0, x1=cal['L_vm_m'], fillcolor="rgba(255,0,0,0.1)", line_width=0, 
+                  annotation_text="SHEAR", annotation_position="inside top")
+    
+    fig.add_vrect(x0=cal['L_vm_m'], x1=cal['L_md_m'], fillcolor="rgba(255,165,0,0.1)", line_width=0, 
+                  annotation_text="MOMENT", annotation_position="inside top")
+    
+    fig.add_vrect(x0=cal['L_md_m'], x1=L_max, fillcolor="rgba(0,128,0,0.1)", line_width=0, 
+                  annotation_text="DEFLECTION", annotation_position="inside top")
     
     # Curves
     fig.add_trace(go.Scatter(x=L_range, y=ys, name='Shear Limit', line=dict(color='red', dash='dash')))
