@@ -2,184 +2,149 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-# --- 1. ฐานข้อมูลหน้าตัดเหล็ก (ตัวอย่าง H-Beam มาตรฐาน) ---
-# หน่วย: Area (cm2), I (cm4), Z (cm3)
+# --- 1. ฐานข้อมูลหน้าตัดเหล็ก (H-Beam) ---
+# Weight (kg/m), Area (cm2), Ix (cm4), Zx (cm3)
 STEEL_SECTIONS = {
-    "H-100x100x6x8": {"A": 21.9, "Ix": 383, "Zx": 76.5, "Iy": 134, "Zy": 26.7, "Weight": 17.2},
-    "H-150x150x7x10": {"A": 40.14, "Ix": 1640, "Zx": 219, "Iy": 563, "Zy": 75.1, "Weight": 31.5},
-    "H-200x200x8x12": {"A": 63.53, "Ix": 4720, "Zx": 472, "Iy": 1600, "Zy": 160, "Weight": 49.9},
-    "H-250x250x9x14": {"A": 92.18, "Ix": 10800, "Zx": 867, "Iy": 3650, "Zy": 292, "Weight": 72.4},
-    "H-300x300x10x15": {"A": 119.8, "Ix": 20400, "Zx": 1360, "Iy": 6750, "Zy": 450, "Weight": 94.0},
-    "Custom": {"A": 0, "Ix": 0, "Zx": 0} # ให้กรอกเอง
+    "H-100x100x6x8":  {"W": 17.2, "A": 21.90, "Ix": 383,   "Zx": 76.5},
+    "H-125x125x6.5x9":{"W": 23.8, "A": 30.31, "Ix": 847,   "Zx": 136},
+    "H-150x150x7x10": {"W": 31.5, "A": 40.14, "Ix": 1640,  "Zx": 219},
+    "H-175x175x7.5x11":{"W": 40.2, "A": 51.21, "Ix": 2940,  "Zx": 330},
+    "H-200x200x8x12": {"W": 49.9, "A": 63.53, "Ix": 4720,  "Zx": 472},
+    "H-250x250x9x14": {"W": 72.4, "A": 92.18, "Ix": 10800, "Zx": 867},
+    "H-300x300x10x15": {"W": 94.0, "A": 119.8, "Ix": 20400, "Zx": 1360},
+    "H-350x350x12x19": {"W": 137.0,"A": 173.9, "Ix": 40300, "Zx": 2300},
+    "H-400x400x13x21": {"W": 172.0,"A": 218.7, "Ix": 66600, "Zx": 3330},
 }
 
-# --- 2. ฟังก์ชันคำนวณ (Analysis Engine) ---
-def calculate_beam(L, E, I, w_udl, P_load, a_dist):
+# --- 2. ฟังก์ชันคำนวณการรับน้ำหนักสูงสุด (Capacity Calculation) ---
+def calculate_capacity(L_m, Fy_ksc, E_gpa, props):
     """
-    คำนวณ Shear, Moment, Deflection สำหรับ Simply Supported Beam
-    L: ความยาวคาน (m)
-    E: Young's Modulus (Pa)
-    I: Moment of Inertia (m^4)
-    w_udl: Distributed Load (N/m)
-    P_load: Point Load (N)
-    a_dist: ระยะ Point load จากซ้าย (m)
+    คำนวณ Safe Load (kg/m) จากหน้าตัดและความยาว
     """
-    x = np.linspace(0, L, 500)  # แบ่งคานเป็น 500 ส่วน
+    # แปลงหน่วย
+    g = 9.81
+    E = E_gpa * 1e9        # Pa
+    Ix = props['Ix'] * 1e-8 # m4
+    Zx = props['Zx'] * 1e-6 # m3
+    Weight_beam = props['W'] # kg/m
     
-    # --- กรณี UDL (Uniform Distributed Load) ---
-    # Reaction
-    R1_w = w_udl * L / 2
-    R2_w = w_udl * L / 2
+    Fy_pa = Fy_ksc * 98066.5 # ksc -> Pa
+    Fb = 0.60 * Fy_pa        # Allowable Bending Stress (ASD)
     
-    # Shear (V)
-    V_w = R1_w - w_udl * x
+    # 1. Moment Capacity Limitation
+    # M_allow = Fb * Zx
+    # M_max = (w * L^2) / 8  ->  w = (8 * M_allow) / L^2
+    M_allow = Fb * Zx        # Nm
+    w_moment_N = (8 * M_allow) / (L_m**2) # N/m
     
-    # Moment (M)
-    M_w = (w_udl * x / 2) * (L - x)
+    # 2. Deflection Limitation
+    # Limit = L / 360
+    # delta = (5 * w * L^4) / (384 * E * I)  ->  w = (384 * E * I * delta) / (5 * L^4)
+    delta_allow = L_m / 360.0 # m
+    w_deflect_N = (384 * E * Ix * delta_allow) / (5 * L_m**4) # N/m
     
-    # Deflection (d) -> สูตร: (-w x / 24EI) * (L^3 - 2Lx^2 + x^3)
-    d_w = -(w_udl * x) / (24 * E * I) * (L**3 - 2*L*x**2 + x**3)
+    # หาค่าที่น้อยที่สุด (Governing Case)
+    w_capacity_N = min(w_moment_N, w_deflect_N)
+    
+    # แปลงเป็น kg/m
+    w_capacity_kg = w_capacity_N / g
+    
+    # หักน้ำหนักคานออก (Net Safe Load)
+    w_net_safe = w_capacity_kg - Weight_beam
+    
+    # ถ้าค่าติดลบแสดงว่าแค่คานเปล่าก็รับน้ำหนักตัวเองไม่ได้ (หรือแอ่นเกิน)
+    if w_net_safe < 0:
+        w_net_safe = 0.0
 
-    # --- กรณี Point Load ---
-    # Reaction
-    b_dist = L - a_dist
-    R1_p = P_load * b_dist / L
-    R2_p = P_load * a_dist / L
-    
-    # คำนวณ V, M, d โดยใช้เงื่อนไขของ x (Macauley Method หรือแยกช่วง)
-    V_p = np.where(x < a_dist, R1_p, R1_p - P_load)
-    
-    M_p = np.where(x < a_dist, R1_p * x, R1_p * x - P_load * (x - a_dist))
-    
-    # Deflection สูตรแยกช่วง
-    # ช่วง x < a
-    d_p1 = -(P_load * b_dist * x) / (6 * L * E * I) * (L**2 - b_dist**2 - x**2)
-    # ช่วง x > a
-    d_p2 = -(P_load * b_dist * x) / (6 * L * E * I) * (L**2 - b_dist**2 - x**2) + (P_load * (x - a_dist)**3) / (6 * E * I)
-    
-    d_p = np.where(x < a_dist, d_p1, d_p2)
-
-    # --- Superposition (รวมผล) ---
-    V_total = V_w + V_p
-    M_total = M_w + M_p
-    d_total = d_w + d_p
-    
-    return x, V_total, M_total, d_total
+    return {
+        "net_load": w_net_safe,         # น้ำหนักบรรทุกปลอดภัย (ไม่รวมคาน)
+        "total_load": w_capacity_kg,    # น้ำหนักรวมที่รับได้
+        "govern_by": "Moment (การดัด)" if w_moment_N < w_deflect_N else "Deflection (การแอ่น)",
+        "w_moment": w_moment_N / g,
+        "w_deflect": w_deflect_N / g
+    }
 
 # --- 3. ส่วนแสดงผล (Streamlit App) ---
-st.set_page_config(page_title="Steel Beam Design", layout="wide")
+st.set_page_config(page_title="Beam Capacity Check", layout="wide")
 
-st.title("🏗️ Steel Beam Calculator (Simple Beam)")
-st.markdown("คำนวณ Shear, Moment, Deflection และตรวจสอบ Ratio ของคานเหล็ก")
+st.title("🏗️ Beam Load Capacity Calculator")
+st.markdown("คำนวณหา **น้ำหนักบรรทุกปลอดภัย (Safe Load)** ที่คานรับได้ จากขนาดหน้าตัดและความยาว")
 
 # --- Sidebar Inputs ---
-st.sidebar.header("1. คุณสมบัติวัสดุและหน้าตัด")
-
-# เลือกหน้าตัด
+st.sidebar.header("ตั้งค่าคุณสมบัติ")
 section_name = st.sidebar.selectbox("เลือกขนาด H-Beam", list(STEEL_SECTIONS.keys()))
 props = STEEL_SECTIONS[section_name]
 
-if section_name == "Custom":
-    Ix_cm4 = st.sidebar.number_input("Moment of Inertia, Ix (cm4)", value=1000.0)
-    Zx_cm3 = st.sidebar.number_input("Section Modulus, Zx (cm3)", value=100.0)
-else:
-    Ix_cm4 = props["Ix"]
-    Zx_cm3 = props["Zx"]
-    st.sidebar.info(f"Ix: {Ix_cm4} cm4 | Zx: {Zx_cm3} cm3")
+L = st.sidebar.slider("ความยาวคาน (m)", min_value=1.0, max_value=20.0, value=6.0, step=0.5)
+Fy = st.sidebar.number_input("Fy (ksc)", value=2400)
+E_val = st.sidebar.number_input("E (GPa)", value=200)
 
-# ค่าวัสดุ
-Fy = st.sidebar.number_input("Yield Strength, Fy (MPa/ksc)", value=2400.0, help="เช่น SS400 = 2400 ksc (approx 235 MPa)")
-E_val = st.sidebar.number_input("Young's Modulus, E (GPa)", value=200.0) # เหล็ก ~200 GPa
-Allowable_Stress_Ratio = 0.60 # ASD method (0.6Fy)
-Fb = Fy * Allowable_Stress_Ratio # Allowable Bending Stress
+# --- Calculation ---
+res = calculate_capacity(L, Fy, E_val, props)
 
-st.sidebar.header("2. รูปร่างและน้ำหนักบรรทุก")
-L = st.sidebar.number_input("ความยาวคาน, L (m)", value=6.0, step=0.5)
-
-st.sidebar.subheader("Loadings")
-w_load_kg = st.sidebar.number_input("Distributed Load (kg/m)", value=500.0)
-p_load_kg = st.sidebar.number_input("Point Load (kg)", value=1000.0)
-a_pos = st.sidebar.slider("ตำแหน่ง Point Load (m)", 0.0, L, L/2)
-
-# --- การแปลงหน่วย (Unit Conversion) เพื่อคำนวณ ---
-# เราจะคำนวณในหน่วย SI Base (N, m, Pa) เพื่อความแม่นยำ แล้วแปลงกลับตอนแสดงผล
-g = 9.81
-w_newton = w_load_kg * g     # kg/m -> N/m
-p_newton = p_load_kg * g     # kg -> N
-E_pascal = E_val * 1e9       # GPa -> Pa
-I_m4 = Ix_cm4 * 1e-8         # cm4 -> m4
-Z_m3 = Zx_cm3 * 1e-6         # cm3 -> m3
-Fy_pascal = Fy * 98066.5     # ksc -> Pa (สมมติ input เป็น ksc ตามความนิยมไทย, ถ้าเป็น MPa ให้แก้ตัวคูณ)
-# หมายเหตุ: ถ้า user กรอก Fy เป็น ksc (kg/cm2) -> 1 ksc ≈ 98066.5 Pa
-
-# --- Run Calculation ---
-x, V, M, d = calculate_beam(L, E_pascal, I_m4, w_newton, p_newton, a_pos)
-
-# หาค่าสูงสุด (Absolute Max)
-max_V = np.max(np.abs(V))
-max_M = np.max(np.abs(M))
-max_d = np.max(np.abs(d))
-
-# --- Design Check (Ratio) ---
-# 1. Moment Capacity (Allowable Moment)
-# M_all = Fb * Zx
-M_allowable = (Fb * 98066.5) * Z_m3 # แปลง Fb(ksc) -> Pa แล้วคูณ Z(m3) -> Nm
-moment_ratio = max_M / M_allowable
-
-# 2. Deflection Limit (L/360)
-d_limit = L / 360 # meters
-deflection_ratio = max_d / d_limit
-
-# --- Display Results ---
-col1, col2, col3 = st.columns(3)
-
-# แปลงหน่วยกลับเพื่อแสดงผลให้ดูง่าย (kg, m, cm)
-# Moment: Nm -> kg.m
-m_display = max_M / g 
-# Shear: N -> kg
-v_display = max_V / g
-# Deflection: m -> mm
-d_display = max_d * 1000
-d_limit_display = d_limit * 1000
+# --- Main Display ---
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.metric("Max Moment", f"{m_display:,.2f} kg·m")
-    status = "✅ PASS" if moment_ratio <= 1.0 else "❌ FAIL"
-    st.write(f"**Moment Ratio:** {moment_ratio:.2f} ({status})")
-    st.progress(min(moment_ratio, 1.0))
+    st.subheader("ผลการคำนวณ (Results)")
+    st.info(f"หน้าตัด: **{section_name}**\n\nความยาว: **{L} เมตร**")
+    
+    st.metric(
+        label="รับน้ำหนักบรรทุกปลอดภัย (Safe Load)",
+        value=f"{res['net_load']:,.0f} kg/m",
+        delta="น้ำหนักที่วางเพิ่มได้จริง"
+    )
+    
+    st.write("---")
+    st.write("**รายละเอียด:**")
+    st.write(f"🔹 รับได้สูงสุดตามโมเมนต์: `{res['w_moment']:,.0f} kg/m`")
+    st.write(f"🔹 รับได้สูงสุดตามระยะแอ่น: `{res['w_deflect']:,.0f} kg/m`")
+    st.write(f"🔸 หักน้ำหนักคาน: `-{props['W']} kg/m`")
+    
+    if res['govern_by'] == "Moment (การดัด)":
+        st.warning(f"⚠️ ควบคุมโดย: **{res['govern_by']}**")
+    else:
+        st.success(f"⚠️ ควบคุมโดย: **{res['govern_by']}** (คานจะแอ่นเกินก่อนที่จะพัง)")
 
 with col2:
-    st.metric("Max Shear", f"{v_display:,.2f} kg")
-    # Shear check มักจะผ่านง่ายในคานยาว ขอละไว้หรือเพิ่มโค้ดเช็ค 0.4Fy ได้
-    st.write("*(Shear typically passes for long beams)*")
+    st.subheader(f"กราฟความสามารถในการรับน้ำหนัก (Span vs Load)")
+    
+    # สร้างกราฟ Curve ความสัมพันธ์ระหว่าง ความยาว vs รับน้ำหนักได้เท่าไหร่
+    lengths = np.linspace(2, 20, 50) # คำนวณช่วงความยาว 2-20 เมตร
+    loads_moment = []
+    loads_deflect = []
+    
+    for l_x in lengths:
+        c = calculate_capacity(l_x, Fy, E_val, props)
+        loads_moment.append(c['w_moment'])
+        loads_deflect.append(c['w_deflect'])
+    
+    fig = go.Figure()
+    
+    # เส้น Limit Moment
+    fig.add_trace(go.Scatter(x=lengths, y=loads_moment, mode='lines', name='Limit by Moment', line=dict(color='orange', dash='dash')))
+    
+    # เส้น Limit Deflection
+    fig.add_trace(go.Scatter(x=lengths, y=loads_deflect, mode='lines', name='Limit by Deflection', line=dict(color='green', dash='dash')))
+    
+    # พื้นที่ Safe Zone (เติมสีใต้กราฟที่ต่ำกว่า)
+    safe_loads = [min(m, d) for m, d in zip(loads_moment, loads_deflect)]
+    fig.add_trace(go.Scatter(x=lengths, y=safe_loads, mode='lines', name='Safe Capacity', 
+                             fill='tozeroy', line=dict(color='blue', width=3)))
 
-with col3:
-    st.metric("Max Deflection", f"{d_display:,.2f} mm")
-    status_d = "✅ PASS" if deflection_ratio <= 1.0 else "❌ FAIL"
-    st.write(f"**Limit (L/360):** {d_limit_display:.2f} mm")
-    st.write(f"**Deflection Ratio:** {deflection_ratio:.2f} ({status_d})")
+    # จุดปัจจุบันที่เลือก
+    fig.add_trace(go.Scatter(x=[L], y=[res['total_load']], mode='markers+text', 
+                             marker=dict(size=12, color='red'),
+                             text=[f"{res['total_load']:.0f} kg/m"], textposition="top right",
+                             name='Current Selection'))
 
-st.markdown("---")
-
-# --- Plotting Diagrams ---
-fig = make_subplots(rows=3, cols=1, 
-                    shared_xaxes=True, 
-                    vertical_spacing=0.1,
-                    subplot_titles=("Shear Force Diagram (kg)", "Bending Moment Diagram (kg·m)", "Deflection (mm)"))
-
-# SFD
-fig.add_trace(go.Scatter(x=x, y=V/g, fill='tozeroy', line=dict(color='red'), name='Shear (kg)'), row=1, col=1)
-
-# BMD
-fig.add_trace(go.Scatter(x=x, y=M/g, fill='tozeroy', line=dict(color='blue'), name='Moment (kg·m)'), row=2, col=1)
-
-# Deflection (กลับด้านแกน Y เพื่อให้ดูเหมือนคานแอ่นลง)
-fig.add_trace(go.Scatter(x=x, y=d*1000, line=dict(color='green', width=3), name='Deflection (mm)'), row=3, col=1)
-fig.update_yaxes(autorange="reversed", row=3, col=1) # กลับหัวกราฟแอ่นตัว
-
-fig.update_layout(height=800, showlegend=False, hovermode="x unified")
-st.plotly_chart(fig, use_container_width=True)
-
-st.info("หมายเหตุ: การคำนวณนี้สำหรับ Simple Beam (คานช่วงเดียวปลายหมุน) และใช้หน่วย Elastic Design (ASD) เบื้องต้น")
+    fig.update_layout(
+        xaxis_title="ความยาวคาน (m)",
+        yaxis_title="น้ำหนักบรรทุกรวม (kg/m)",
+        hovermode="x unified",
+        legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("หมายเหตุ: กราฟแสดงน้ำหนักบรรทุกรวม (Total Load) ที่รับได้ (รวมน้ำหนักคานเอง)")
