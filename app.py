@@ -3,7 +3,6 @@ import numpy as np
 import plotly.graph_objects as go
 
 # --- 1. ฐานข้อมูลหน้าตัดเหล็ก ---
-# D: Depth (mm), tw: Web Thickness (mm)
 STEEL_SECTIONS = {
     "H-100x100x6x8":   {"W": 17.2, "A": 21.90, "Ix": 383,   "Zx": 76.5, "D": 100, "tw": 6},
     "H-125x125x6.5x9": {"W": 23.8, "A": 30.31, "Ix": 847,   "Zx": 136,  "D": 125, "tw": 6.5},
@@ -16,7 +15,7 @@ STEEL_SECTIONS = {
     "H-400x400x13x21":  {"W": 172.0,"A": 218.7, "Ix": 66600, "Zx": 3330, "D": 400, "tw": 13},
 }
 
-# --- 2. ฟังก์ชันคำนวณกราฟ (สำหรับ plot) ---
+# --- 2. ฟังก์ชันคำนวณกราฟ ---
 def get_capacity_curves(lengths, Fy_ksc, E_gpa, props):
     g = 9.81
     E = E_gpa * 1e9         
@@ -25,6 +24,7 @@ def get_capacity_curves(lengths, Fy_ksc, E_gpa, props):
     Aw = (props['D']/1000) * (props['tw']/1000) 
     Fy_pa = Fy_ksc * 98066.5
     
+    # Base Capacity (SI Units)
     V_allow_N = 0.40 * Fy_pa * Aw 
     M_allow_N = 0.60 * Fy_pa * Zx
     
@@ -36,6 +36,8 @@ def get_capacity_curves(lengths, Fy_ksc, E_gpa, props):
         if L == 0: 
             w_shear_list.append(None)
             continue
+        
+        # Calculate in terms of Load (w) first
         w_s = (2 * V_allow_N) / L
         w_m = (8 * M_allow_N) / (L**2)
         delta_lim = L / 360.0
@@ -45,11 +47,11 @@ def get_capacity_curves(lengths, Fy_ksc, E_gpa, props):
         w_moment_list.append(w_m / g)
         w_deflect_list.append(w_d / g)
 
-    return np.array(w_shear_list), np.array(w_moment_list), np.array(w_deflect_list), V_allow_N/g
+    return np.array(w_shear_list), np.array(w_moment_list), np.array(w_deflect_list), V_allow_N
 
 # --- Main App ---
-st.set_page_config(page_title="Detailed Beam Analysis", layout="wide")
-st.title("🏗️ Beam Capacity: Calculation & Analysis")
+st.set_page_config(page_title="Beam Shear Analysis", layout="wide")
+st.title("🏗️ Beam Capacity: Shear vs Load View")
 
 # Sidebar
 st.sidebar.header("1. เลือกหน้าตัดและวัสดุ")
@@ -58,33 +60,57 @@ props = STEEL_SECTIONS[section_name]
 Fy = st.sidebar.number_input("Fy (ksc)", value=2400)
 E_val = st.sidebar.number_input("E (GPa)", value=200)
 
-st.sidebar.header("2. เลือกความยาวเพื่อดูวิธีทำ")
-# Slider นี้ใช้ทั้งปรับกราฟและแสดงวิธีทำ
+st.sidebar.header("2. ตั้งค่ากราฟ")
+# *** จุดสำคัญ: เลือกโหมดแกน Y ***
+view_mode = st.sidebar.radio("เลือกมุมมองแกน Y:", ["Uniform Load (kg/m)", "Max Shear Force (kg)"])
 L_input = st.sidebar.slider("ความยาวคาน L (m)", min_value=1.0, max_value=20.0, value=6.0, step=0.1)
-max_graph_len = max(20.0, L_input * 1.5)
 
-# --- ส่วนที่ 1: กราฟ (เหมือนเดิมแต่ตัดทอนให้กระชับ) ---
-st.subheader("1. กราฟวิเคราะห์พฤติกรรม (Span vs Capacity)")
+# --- Calculation Data Prep ---
+max_graph_len = max(20.0, L_input * 1.5)
 L_range = np.linspace(0.5, max_graph_len, 200)
-w_s, w_m, w_d, V_allow_kg = get_capacity_curves(L_range, Fy, E_val, props)
+w_s, w_m, w_d, V_allow_N = get_capacity_curves(L_range, Fy, E_val, props)
+V_allow_kg = V_allow_N / 9.81
+
+# หา w_safe (kg/m)
 w_safe = np.minimum(np.minimum(w_s, w_m), w_d) - props['W']
 w_safe = np.maximum(w_safe, 0)
+w_total_safe = w_safe + props['W']
 
-y_safe = w_safe + props['W'] # Plot total load for clarity
+# --- Convert Data based on View Mode ---
+if view_mode == "Max Shear Force (kg)":
+    # แปลงทุกอย่างเป็น Shear Force (V = wL/2)
+    y_s = np.full_like(L_range, V_allow_kg) # Shear Limit is constant
+    y_m = (w_m * L_range) / 2
+    y_d = (w_d * L_range) / 2
+    y_safe = (w_total_safe * L_range) / 2
+    y_title = "Max Shear Force / Reaction (kg)"
+    y_unit = "kg"
+else:
+    # ใช้ค่า w (kg/m) เดิม
+    y_s = w_s
+    y_m = w_m
+    y_d = w_d
+    y_safe = w_total_safe
+    y_title = "Total Uniform Load Capacity (kg/m)"
+    y_unit = "kg/m"
 
+# --- Plotting ---
+st.subheader(f"1. กราฟวิเคราะห์ ({view_mode})")
 fig = go.Figure()
-fig.add_trace(go.Scatter(x=L_range, y=w_s, name='Shear Limit', line=dict(color='red', dash='dash', width=1)))
-fig.add_trace(go.Scatter(x=L_range, y=w_m, name='Moment Limit', line=dict(color='orange', dash='dash', width=1)))
-fig.add_trace(go.Scatter(x=L_range, y=w_d, name='Deflection Limit', line=dict(color='green', dash='dash', width=1)))
-fig.add_trace(go.Scatter(x=L_range, y=y_safe, name='Total Safe Capacity', line=dict(color='black', width=4)))
 
-# เพิ่มจุด L ปัจจุบัน
+# Plot Lines
+fig.add_trace(go.Scatter(x=L_range, y=y_s, name='Shear Limit', line=dict(color='red', dash='dash', width=1)))
+fig.add_trace(go.Scatter(x=L_range, y=y_m, name='Moment Limit', line=dict(color='orange', dash='dash', width=1)))
+fig.add_trace(go.Scatter(x=L_range, y=y_d, name='Deflection Limit', line=dict(color='green', dash='dash', width=1)))
+fig.add_trace(go.Scatter(x=L_range, y=y_safe, name='Safe Capacity', line=dict(color='black', width=4)))
+
+# Current Point
 current_idx = (np.abs(L_range - L_input)).argmin()
 current_val = y_safe[current_idx]
 fig.add_trace(go.Scatter(x=[L_input], y=[current_val], mode='markers', marker=dict(size=12, color='blue'), name='Current L'))
 
-# แบ่ง Zone สี
-governing_idx = np.argmin([w_s, w_m, w_d], axis=0)
+# Color Zones
+governing_idx = np.argmin([y_s, y_m, y_d], axis=0)
 colors = ['rgba(255, 0, 0, 0.1)', 'rgba(255, 165, 0, 0.1)', 'rgba(0, 128, 0, 0.1)']
 labels = ['Shear Control', 'Moment Control', 'Deflection Control']
 start_idx = 0
@@ -96,15 +122,15 @@ for i in range(1, len(L_range)):
         fig.add_vrect(x0=x0, x1=x1, fillcolor=colors[zone_type], opacity=1, layer="below", line_width=0, annotation_text=labels[zone_type], annotation_position="inside top")
         start_idx = i
 
-fig.update_layout(height=400, margin=dict(t=30, b=0), xaxis_title="Length (m)", yaxis_title="Total Load Capacity (kg/m)", hovermode="x unified")
-fig.update_yaxes(range=[0, current_val * 2.5]) # Zoom ให้เห็นค่าปัจจุบันชัดๆ
+fig.update_layout(height=450, margin=dict(t=30, b=0), xaxis_title="Length (m)", yaxis_title=y_title, hovermode="x unified")
+fig.update_yaxes(range=[0, current_val * 2.5])
 st.plotly_chart(fig, use_container_width=True)
 
-# --- ส่วนที่ 2: แสดงวิธีทำละเอียด (Calculations) ---
+# --- Calculation Section (Dynamic) ---
 st.markdown("---")
-st.subheader(f"2. แสดงวิธีคำนวณที่ระยะ L = {L_input} เมตร")
+st.subheader(f"2. แสดงวิธีคำนวณที่ L = {L_input} เมตร ({view_mode})")
 
-# เตรียมตัวแปร (Variables Preparation)
+# Prepare Constants
 g = 9.81
 Fy_Pa = Fy * 98066.5
 E_Pa = E_val * 1e9
@@ -112,87 +138,78 @@ Aw_m2 = (props['D']/1000) * (props['tw']/1000)
 Zx_m3 = props['Zx'] * 1e-6
 Ix_m4 = props['Ix'] * 1e-8
 
-# คำนวณค่า Limit (SI Unit)
-# 1. Shear
-V_allow_SI = 0.40 * Fy_Pa * Aw_m2
-w_shear_SI = (2 * V_allow_SI) / L_input
-w_shear_kg = w_shear_SI / g
+# Calculate Base Values
+V_limit_kg = (0.40 * Fy_Pa * Aw_m2) / g # Shear Capacity (kg)
+M_limit_kgm = (0.60 * Fy_Pa * Zx_m3) / g # Moment Capacity (kg-m approx) *for logic only
+# Re-calculate specific values at L_input
+calc_w_s = (2 * V_allow_N) / L_input / g
+calc_w_m = (8 * (0.60 * Fy_Pa * Zx_m3)) / (L_input**2) / g
+calc_w_d = (384 * E_Pa * Ix_m4 * (L_input/360.0)) / (5 * L_input**4) / g
 
-# 2. Moment
-M_allow_SI = 0.60 * Fy_Pa * Zx_m3
-w_moment_SI = (8 * M_allow_SI) / (L_input**2)
-w_moment_kg = w_moment_SI / g
+# Values for Display
+val_she_load = calc_w_s
+val_mom_load = calc_w_m
+val_def_load = calc_w_d
 
-# 3. Deflection
-delta_allow_SI = L_input / 360.0
-w_deflect_SI = (384 * E_Pa * Ix_m4 * delta_allow_SI) / (5 * L_input**4)
-w_deflect_kg = w_deflect_SI / g
+val_she_force = V_limit_kg
+val_mom_force = (calc_w_m * L_input) / 2
+val_def_force = (calc_w_d * L_input) / 2
 
-# หาตัว Control
-vals = {'Shear': w_shear_kg, 'Moment': w_moment_kg, 'Deflection': w_deflect_kg}
+# Determine Control
+vals = {'Shear': calc_w_s, 'Moment': calc_w_m, 'Deflection': calc_w_d}
 control_case = min(vals, key=vals.get)
-safe_load_total = vals[control_case]
-safe_load_net = safe_load_total - props['W']
-if safe_load_net < 0: safe_load_net = 0
+safe_load = vals[control_case]
+safe_shear = (safe_load * L_input) / 2
 
-# --- แสดงผล (Display Layout) ---
 c1, c2, c3 = st.columns(3)
 
-# Function ช่วย format ตัวเลข
-def fmt(val): return f"{val:,.2f}"
-def sci(val): return f"{val:.2e}" # Scientific notation
+if view_mode == "Max Shear Force (kg)":
+    # --- Mode: Display as Shear Force (V) ---
+    with c1:
+        st.markdown("### 🟥 1. Shear Limit")
+        st.caption("ขีดจำกัดแรงเฉือนของหน้าตัด (Constant):")
+        st.latex(r"V_{allow} = 0.4 F_y A_w")
+        st.latex(rf"= 0.4 \times {Fy} \times {props['D']/10} \times {props['tw']/10}")
+        st.metric("Limit V_shear", f"{val_she_force:,.0f} kg")
+    
+    with c2:
+        st.markdown("### 🟧 2. Moment Limit")
+        st.caption("แรงเฉือนที่ทำให้เกิดโมเมนต์สูงสุด ($V = 4M/L$):")
+        st.latex(r"M_{allow} = 0.6 F_y Z_x")
+        st.latex(r"V_{moment} = \frac{4 \times M_{allow}}{L}")
+        st.metric("Limit V_moment", f"{val_mom_force:,.0f} kg")
 
-with c1:
-    st.markdown("### 🟥 1. Check Shear")
-    st.caption("แรงเฉือนที่ยอมให้ ($0.4F_y A_w$):")
-    st.latex(rf"V_{{all}} = 0.4 \times {Fy_Pa:.0f} \times {Aw_m2:.6f} = {V_allow_SI/1000:,.1f} \text{{ kN}}")
-    st.caption(f"หาน้ำหนักแผ่ $w$ จาก $V_{{max}} = wL/2$:")
-    st.latex(rf"w_s = \frac{{2 \times V_{{all}}}}{{L}} = \frac{{2 \times {V_allow_SI:.0f}}}{{{L_input}}}")
-    st.metric("Shear Capacity", f"{w_shear_kg:,.0f} kg/m")
+    with c3:
+        st.markdown("### 🟩 3. Deflection Limit")
+        st.caption("แรงเฉือนที่ทำให้แอ่นตัวถึงขีดจำกัด ($L/360$):")
+        st.latex(r"\delta = \frac{L}{360}, \quad V = \frac{wL}{2}")
+        st.latex(r"V_{deflect} = \frac{384 E I \delta}{10 L^3}")
+        st.metric("Limit V_deflect", f"{val_def_force:,.0f} kg")
 
-with c2:
-    st.markdown("### 🟧 2. Check Moment")
-    st.caption("โมเมนต์ที่ยอมให้ ($0.6F_y Z_x$):")
-    st.latex(rf"M_{{all}} = 0.6 \times {Fy_Pa:.0f} \times {Zx_m3:.6f} = {M_allow_SI/1000:,.1f} \text{{ kNm}}")
-    st.caption(f"หาน้ำหนักแผ่ $w$ จาก $M_{{max}} = wL^2/8$:")
-    st.latex(rf"w_m = \frac{{8 \times M_{{all}}}}{{L^2}} = \frac{{8 \times {M_allow_SI:.0f}}}{{{L_input}^2}}")
-    st.metric("Moment Capacity", f"{w_moment_kg:,.0f} kg/m")
+else:
+    # --- Mode: Display as Load (w) ---
+    with c1:
+        st.markdown("### 🟥 1. Shear Limit")
+        st.caption("Load ที่ทำให้เกิดแรงเฉือนสูงสุด:")
+        st.latex(r"w_s = \frac{2 V_{allow}}{L}")
+        st.metric("Limit w_shear", f"{val_she_load:,.0f} kg/m")
+    
+    with c2:
+        st.markdown("### 🟧 2. Moment Limit")
+        st.caption("Load ที่ทำให้เกิดโมเมนต์สูงสุด:")
+        st.latex(r"w_m = \frac{8 M_{allow}}{L^2}")
+        st.metric("Limit w_moment", f"{val_mom_load:,.0f} kg/m")
 
-with c3:
-    st.markdown("### 🟩 3. Check Deflection")
-    st.caption("ระยะแอ่นที่ยอมให้ ($L/360$):")
-    st.latex(rf"\delta_{{all}} = \frac{{{L_input}}}{{360}} = {delta_allow_SI*1000:.2f} \text{{ mm}}")
-    st.caption(f"หาน้ำหนักแผ่ $w$ จาก $\delta = 5wL^4/384EI$:")
-    st.latex(rf"w_d = \frac{{384 E I \delta_{{all}}}}{{5 L^4}} = \frac{{384 \cdot {E_Pa:.1e} \cdot {Ix_m4:.1e} \cdot {delta_allow_SI:.4f}}}{{5 \cdot {L_input}^4}}")
-    st.metric("Deflection Capacity", f"{w_deflect_kg:,.0f} kg/m")
+    with c3:
+        st.markdown("### 🟩 3. Deflection Limit")
+        st.caption("Load ที่ทำให้คานแอ่น $L/360$:")
+        st.latex(r"w_d = \frac{384 E I (L/360)}{5 L^4}")
+        st.metric("Limit w_deflect", f"{val_def_load:,.0f} kg/m")
 
 st.markdown("---")
-
-# --- ส่วนสรุป (Conclusion) ---
-final_col1, final_col2 = st.columns([2, 1])
-
-with final_col1:
-    st.subheader(f"🎯 บทสรุปที่ L = {L_input} เมตร")
-    st.markdown(f"""
-    จากการเปรียบเทียบทั้ง 3 กรณี พบว่าค่าน้อยที่สุดคือ:
-    ### **{control_case} Control**
-    
-    1. **Total Safe Load** (รวมน้ำหนักคาน) = **{safe_load_total:,.0f} kg/m**
-    2. **Beam Weight** (น้ำหนักคาน) = **{props['W']} kg/m**
-    3. **Net Safe Load** (น้ำหนักบรรทุกปลอดภัยสุทธิ) = {safe_load_total:,.0f} - {props['W']}
-    """)
-    
-    st.success(f"✅ สรุป: รับน้ำหนักภายนอกได้สูงสุด = {safe_load_net:,.0f} kg/m")
-
-with final_col2:
-    # Visual Indicator
-    if control_case == "Shear":
-        st.error("⚠️ Shear Control (วิกฤตที่แรงเฉือน)")
-    elif control_case == "Moment":
-        st.warning("⚠️ Moment Control (วิกฤตที่การดัด)")
-    else:
-        st.success("⚠️ Deflection Control (วิกฤตที่การแอ่นตัว)")
-        
-    st.write("หมายเหตุ:")
-    st.write("- การคำนวณใช้หน่วย SI (Pa, N, m) เพื่อความแม่นยำ")
-    st.write("- แสดงผลลัพธ์สุดท้ายเป็น kg/m ($g=9.81$)")
+st.info(f"""
+**สรุปผล (Conclusion):**
+* ที่ความยาว **{L_input} เมตร** กรณีที่ควบคุมคือ: **{control_case}**
+* รับแรงเฉือนที่หัวเสาได้สูงสุด (Max Reaction): **{safe_shear:,.0f} kg**
+* รับน้ำหนักบรรทุกแผ่ได้สูงสุด (Safe Load): **{safe_load:,.0f} kg/m** (รวมคาน)
+""")
