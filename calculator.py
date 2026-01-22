@@ -6,7 +6,7 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method):
     L_cm = L_m * 100.0
     Aw = (props['D']/10.0) * (props['tw']/10.0)
     
-    # --- 2. Nominal Capacity (กำลังระบุ) ---
+    # --- 2. Nominal Capacity (ต้องมีส่วนนี้เพื่อส่งค่ากลับไปแสดงผล) ---
     # Shear: Vn = 0.6 * Fy * Aw
     Vn = 0.60 * Fy_ksc * Aw 
     # Moment: Mn = Fy * Zx
@@ -15,7 +15,7 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method):
     # --- 3. Design Factor (ASD vs LRFD) ---
     if method == "ASD":
         omega_v, omega_b = 1.50, 1.67
-        phi_v, phi_b = None, None # ไม่ใช้ใน ASD
+        phi_v, phi_b = 0.0, 0.0 # ไม่ใช้ใน ASD ใส่ค่า 0 กัน Error
         
         V_des = Vn / omega_v
         M_des = Mn / omega_b
@@ -26,7 +26,7 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method):
         
     else: # LRFD
         phi_v, phi_b = 1.00, 0.90
-        omega_v, omega_b = None, None
+        omega_v, omega_b = 1.0, 1.0 # ไม่ใช้ใน LRFD ใส่ค่า 1 กัน Error
         
         V_des = Vn * phi_v
         M_des = Mn * phi_b
@@ -48,13 +48,13 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method):
     L_vm_cm = (4 * M_des) / V_des
     L_md_cm = (384 * E_ksc * props['Ix']) / (14400 * M_des)
     
-    # Return dictionary with ALL components for detailed report
+    # Return Dictionary (ต้องครบตามที่ main.py เรียกใช้)
     return {
         # Inputs & Props
         "Aw": Aw, "Ix": props['Ix'], "Zx": props['Zx'], 
         "L_cm": L_cm, "E_ksc": E_ksc,
         
-        # Nominal
+        # Nominal (ตัวที่ Error คือบรรทัดนี้ครับ)
         "Vn": Vn, "Mn": Mn,
         
         # Factors
