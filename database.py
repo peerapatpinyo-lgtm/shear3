@@ -1,7 +1,5 @@
 # database.py
 
-# ฐานข้อมูลหน้าตัดเหล็ก SYS/TIS (Series 100 - 900)
-# Units: W(kg/m), D(mm), tw(mm), Ix(cm4), Zx(cm3)
 SYS_H_BEAMS = {
     # Series 100
     "H-100x50x5x7":     {"W": 9.3,  "D": 100, "tw": 5, "Ix": 378, "Zx": 84},
