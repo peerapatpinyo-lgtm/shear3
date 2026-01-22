@@ -1,13 +1,11 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-import pandas as pd
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="SYS H-Beam: Engineering Report", layout="wide")
+st.set_page_config(page_title="SYS H-Beam: Full Calculation", layout="wide")
 
-# --- 2. DATABASE (SYS H-BEAM Standard) ---
-# หน่วย: D, tw (mm) | W (kg/m) | Ix (cm4) | Zx (cm3)
+# --- 2. DATABASE ---
 SYS_H_BEAMS = {
     "H-100x50x5x7":     {"W": 9.3,  "D": 100, "tw": 5,   "Ix": 378,    "Zx": 75.6},
     "H-100x100x6x8":    {"W": 17.2, "D": 100, "tw": 6,   "Ix": 383,    "Zx": 76.5},
@@ -28,261 +26,177 @@ SYS_H_BEAMS = {
     "H-600x200x11x17":  {"W": 106.0,"D": 600, "tw": 11,  "Ix": 77600,  "Zx": 2590},
 }
 
-# --- 3. CALCULATION CORE ---
-def engineering_calc(L_m, Fy_ksc, E_gpa, props, method):
-    # 3.1 Unit Conversion
-    # 1 GPa = 10,197.1621 kg/cm^2 (Approx)
-    E_ksc = E_gpa * 10197.162 
-    
-    # 3.2 Dimensions (mm -> cm)
-    Ix = props['Ix']
-    Zx = props['Zx']
-    D_cm = props['D'] / 10.0
-    tw_cm = props['tw'] / 10.0
-    Aw = D_cm * tw_cm # Area Web
-    
-    # 3.3 Nominal Strength (AISC 360)
-    # Shear: Vn = 0.6 * Fy * Aw
-    Vn = 0.60 * Fy_ksc * Aw 
-    # Moment: Mn = Fy * Zx (Compact Section Assumption)
-    Mn = Fy_ksc * Zx        
-    
-    # 3.4 Allowable/Design Strength
-    if method == "ASD":
-        # Safety Factors
-        omega_v = 1.50
-        omega_b = 1.67
-        V_cap = Vn / omega_v
-        M_cap = Mn / omega_b
-    else:
-        # Resistance Factors
-        phi_v = 1.00
-        phi_b = 0.90
-        V_cap = phi_v * Vn
-        M_cap = phi_b * Mn
-        
-    # 3.5 Specific Calculation for Current Length
+# --- 3. MATH ENGINE ---
+def calculate_details(L_m, Fy_ksc, E_gpa, props, method):
+    # Units
+    E_ksc = E_gpa * 10197.162
     L_cm = L_m * 100.0
     
-    # Uniform Load Formulas
-    # Shear Control: w = 2V/L
-    w_shear_kgm = ((2 * V_cap) / L_cm) * 100
+    # Props
+    Ix = props['Ix']
+    Zx = props['Zx']
+    Aw = (props['D']/10.0) * (props['tw']/10.0) # cm2
     
-    # Moment Control: w = 8M/L^2
-    w_moment_kgm = ((8 * M_cap) / (L_cm**2)) * 100
+    # 1. Nominal Strength
+    Vn = 0.60 * Fy_ksc * Aw
+    Mn = Fy_ksc * Zx
     
-    # Deflection Control: w derived from delta = 5wL^4 / 384EI
-    # Limit delta = L/360
+    # 2. Design Strength & Factors
+    if method == "ASD":
+        factor_v_str, factor_b_str = r"\Omega_v = 1.50", r"\Omega_b = 1.67"
+        V_cap = Vn / 1.50
+        M_cap = Mn / 1.67
+        design_v_str = r"V_{allow} = \frac{V_n}{\Omega_v}"
+        design_m_str = r"M_{allow} = \frac{M_n}{\Omega_b}"
+    else:
+        factor_v_str, factor_b_str = r"\phi_v = 1.00", r"\phi_b = 0.90"
+        V_cap = 1.00 * Vn
+        M_cap = 0.90 * Mn
+        design_v_str = r"V_u = \phi_v V_n"
+        design_m_str = r"M_u = \phi_b M_n"
+        
+    # 3. Load Conversions (kg/m)
+    # Shear: w = 2V/L
+    ws = (2 * V_cap / L_cm) * 100
+    # Moment: w = 8M/L^2
+    wm = (8 * M_cap / L_cm**2) * 100
+    # Deflection
     delta_allow = L_cm / 360.0
-    # w (kg/cm) = (384 * E * I * delta) / (5 * L^4)
-    w_deflect_kgcm = (384 * E_ksc * Ix * delta_allow) / (5 * (L_cm**4))
-    w_deflect_kgm = w_deflect_kgcm * 100
-
+    wd = ((384 * E_ksc * Ix * delta_allow) / (5 * L_cm**4)) * 100
+    
     return {
-        "Aw": Aw, "Ix": Ix, "Zx": Zx, "E_ksc": E_ksc, 
-        "L_cm": L_cm, "delta_allow": delta_allow,
-        "Vn": Vn, "Mn": Mn, "V_cap": V_cap, "M_cap": M_cap,
-        "ws": w_shear_kgm, "wm": w_moment_kgm, "wd": w_deflect_kgm
+        "Aw": Aw, "Vn": Vn, "Mn": Mn, "V_cap": V_cap, "M_cap": M_cap,
+        "ws": ws, "wm": wm, "wd": wd,
+        "L_cm": L_cm, "E_ksc": E_ksc, "delta_allow": delta_allow,
+        "factor_v_str": factor_v_str, "factor_b_str": factor_b_str,
+        "design_v_str": design_v_str, "design_m_str": design_m_str
     }
 
-# --- 4. UI SETUP ---
-st.title("🏗️ SYS H-Beam: รายการคำนวณวิศวกรรม (Detailed Report)")
-st.sidebar.header("1. Input Parameters")
+# --- 4. UI ---
+st.title("🏗️ SYS H-Beam: รายการคำนวณฉบับสมบูรณ์")
 
-method = st.sidebar.radio("Design Method:", ["ASD", "LRFD"])
-section = st.sidebar.selectbox("Section Size:", list(SYS_H_BEAMS.keys()))
-Fy = st.sidebar.number_input("Yield Strength (Fy) [ksc]:", value=2400)
-E_gpa = st.sidebar.number_input("Elastic Modulus (E) [GPa]:", value=200)
-L_input = st.sidebar.slider("Span Length (m):", 1.0, 24.0, 6.0, 0.5)
+with st.sidebar:
+    st.header("Input Data")
+    method = st.radio("Method", ["ASD", "LRFD"])
+    section = st.selectbox("Section", list(SYS_H_BEAMS.keys()))
+    Fy = st.number_input("Fy (ksc)", value=2400)
+    E_gpa = st.number_input("E (GPa)", value=200)
+    L_input = st.slider("Span (m)", 1.0, 24.0, 6.0, 0.5)
 
 props = SYS_H_BEAMS[section]
-cal = engineering_calc(L_input, Fy, E_gpa, props, method)
+cal = calculate_details(L_input, Fy, E_gpa, props, method)
+w_gross = min(cal['ws'], cal['wm'], cal['wd'])
+w_net = max(w_gross - props['W'], 0)
 
-# --- 5. TABS ---
-tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Graph", "📝 2. Detailed Calculation", "📚 3. Formulas & Derivation"])
+# --- TABS ---
+tab_graph, tab_sheet = st.tabs(["📊 Capacity Graph", "📝 Detailed Calculation Sheet"])
 
-# ===== TAB 1: GRAPH & ANALYSIS =====
-with tab1:
-    col_g1, col_g2 = st.columns([3, 1])
+# TAB 1: GRAPH (Brief)
+with tab_graph:
+    # Generate Curve Data
+    L_range = np.linspace(0.5, max(15, L_input*1.5), 200)
+    y_s, y_m, y_d = [], [], []
+    v_c, m_c = cal['V_cap'], cal['M_cap']
     
-    with col_g1:
-        # Create Graph Data
-        L_range = np.linspace(0.5, max(15, L_input*1.5), 300)
-        y_s, y_m, y_d = [], [], []
-        
-        # Constant capacities for loop efficiency
-        v_c = cal['V_cap']
-        m_c = cal['M_cap']
-        E_val = cal['E_ksc']
-        Ix_val = props['Ix']
+    for l in L_range:
+        l_cm = l*100
+        y_s.append(2*v_c/l_cm*100)
+        y_m.append(8*m_c/l_cm**2*100)
+        y_d.append((384*cal['E_ksc']*props['Ix']*(l_cm/360))/(5*l_cm**4)*100)
+    
+    y_gov = np.minimum(np.minimum(y_s, y_m), y_d)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=L_range, y=y_s, name='Shear', line=dict(color='red', dash='dash')))
+    fig.add_trace(go.Scatter(x=L_range, y=y_m, name='Moment', line=dict(color='orange', dash='dash')))
+    fig.add_trace(go.Scatter(x=L_range, y=y_d, name='Deflection', line=dict(color='green', dash='dot')))
+    fig.add_trace(go.Scatter(x=L_range, y=y_gov, name='Capacity', line=dict(color='black', width=4)))
+    fig.add_trace(go.Scatter(x=[L_input], y=[w_gross], mode='markers', marker=dict(size=15, color='blue', symbol='x'), name='Current'))
+    
+    st.plotly_chart(fig, use_container_width=True)
 
-        for l in L_range:
-            l_cm = l * 100
-            y_s.append((2 * v_c / l_cm) * 100)
-            y_m.append((8 * m_c / l_cm**2) * 100)
-            delta = l_cm / 360
-            y_d.append(((384 * E_val * Ix_val * delta) / (5 * l_cm**4)) * 100)
-            
-        y_gov = np.minimum(np.minimum(y_s, y_m), y_d)
-        cur_gov = min(cal['ws'], cal['wm'], cal['wd'])
-        
-        # Plot
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=L_range, y=y_s, name='Shear Limit (แรงเฉือน)', line=dict(color='red', dash='dash')))
-        fig.add_trace(go.Scatter(x=L_range, y=y_m, name='Moment Limit (โมเมนต์)', line=dict(color='orange', dash='dash')))
-        fig.add_trace(go.Scatter(x=L_range, y=y_d, name='Deflection Limit (ระยะแอ่น)', line=dict(color='green', dash='dot')))
-        fig.add_trace(go.Scatter(x=L_range, y=y_gov, name='Governing Capacity', line=dict(color='black', width=4)))
-        fig.add_trace(go.Scatter(x=[L_input], y=[cur_gov], mode='markers', marker=dict(size=15, color='blue', symbol='x'), name=f'Design @ {L_input}m'))
-
-        # Zone Coloring
-        gov_idx = np.argmin([y_s, y_m, y_d], axis=0)
-        colors = ['rgba(255,0,0,0.1)', 'rgba(255,165,0,0.1)', 'rgba(0,128,0,0.1)']
-        
-        start_i = 0
-        for i in range(1, len(L_range)):
-            if gov_idx[i] != gov_idx[i-1] or i == len(L_range)-1:
-                fig.add_vrect(x0=L_range[start_i], x1=L_range[i], fillcolor=colors[gov_idx[start_i]], line_width=0)
-                start_i = i
-                
-        fig.update_layout(height=500, xaxis_title="Length (m)", yaxis_title="Load (kg/m)", margin=dict(t=20, b=0, l=0, r=0))
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_g2:
-        st.markdown("### 📌 Analysis Result")
-        st.metric("Load Capacity", f"{cur_gov:,.0f} kg/m")
-        
-        # Find Transition Point (Shear -> Moment)
-        # 2V/L = 8M/L^2 => L = 4M/V
-        L_trans_vm = (4 * m_c) / v_c / 100 # m
-        
-        st.markdown("---")
-        st.markdown("**จุดเปลี่ยนพฤติกรรม (Critical Lengths):**")
-        st.info(f"**1. Shear $\\to$ Moment:**\n\n ที่ระยะ $L = {L_trans_vm:.2f}$ m")
-        if L_input < L_trans_vm:
-            st.error(f"ปัจจุบัน: {L_input} m (Shear Control)")
-        else:
-            st.warning(f"ปัจจุบัน: {L_input} m (Moment/Deflect Control)")
-
-
-# ===== TAB 2: DETAILED CALCULATION =====
-with tab2:
-    st.markdown(f"### 📄 รายการคำนวณ: **{section}** ({method} Method)")
+# TAB 2: DETAILED CALCULATION
+with tab_sheet:
+    st.markdown(f"### 📄 รายการคำนวณโครงสร้างคานเหล็ก: {section}")
     st.markdown("---")
-
+    
     # 1. Properties
-    st.markdown("#### 1. ข้อมูลการออกแบบ (Design Data)")
+    st.markdown("#### 1. ข้อมูลการออกแบบและคุณสมบัติหน้าตัด")
     c1, c2 = st.columns(2)
     with c1:
-        st.write(f"**Section:** {section}")
-        st.write(f"- $D = {props['D']}$ mm, $t_w = {props['tw']}$ mm")
-        st.write(f"- $I_x = {props['Ix']:,}$ cm⁴")
-        st.write(f"- $Z_x = {props['Zx']:,}$ cm³")
-        st.write(f"- $A_w = D \\times t_w = {cal['Aw']:.2f}$ cm²")
+        st.write(f"- **หน้าตัด:** {section}")
+        st.write(f"- **ความยาวคาน ($L$):** {L_input} m = {cal['L_cm']:.0f} cm")
+        st.write(f"- **กำลังจุดคราก ($F_y$):** {Fy} ksc")
+        st.write(f"- **น้ำหนักคาน ($W_{{beam}}$):** {props['W']} kg/m")
     with c2:
-        st.write(f"**Materials & Span:**")
-        st.write(f"- $F_y = {Fy}$ ksc")
-        st.write(f"- $E = {E_gpa}$ GPa $\\approx {cal['E_ksc']:,.0f}$ ksc")
-        st.write(f"- Span $L = {L_input}$ m $= {cal['L_cm']:.0f}$ cm")
-
+        st.write(f"- **พื้นที่รับแรงเฉือน ($A_w$):** {cal['Aw']:.2f} cm²")
+        st.write(f"- **โมดูลัสหน้าตัด ($Z_x$):** {props['Zx']:,} cm³")
+        st.write(f"- **โมเมนต์อินเนอร์เชีย ($I_x$):** {props['Ix']:,} cm⁴")
+        st.write(f"- **โมดูลัสยืดหยุ่น ($E$):** {cal['E_ksc']:,.0f} ksc")
+    
     st.markdown("---")
-
+    
     # 2. Shear
-    st.markdown("#### 2. ตรวจสอบแรงเฉือน (Shear Capacity)")
-    st.markdown("**Step 1: กำลังรับแรงเฉือนระบุ ($V_n$)**")
-    st.latex(rf"V_n = 0.60 \times F_y \times A_w")
-    st.latex(rf"V_n = 0.60 \times {Fy} \times {cal['Aw']:.2f} = \mathbf{{{cal['Vn']:,.0f}}} \text{{ kg}}")
+    st.markdown("#### 2. คำนวณความสามารถรับแรงเฉือน (Shear Check)")
+    st.write("2.1 หาแรงเฉือนระบุ ($V_n$) และค่าที่ยอมให้:")
+    st.latex(rf"V_n = 0.60 F_y A_w = 0.60 \times {Fy} \times {cal['Aw']:.2f} = {cal['Vn']:,.0f} \text{{ kg}}")
+    st.latex(rf"{cal['design_v_str']} \Rightarrow \text{{ใช้ }} {cal['factor_v_str']}")
+    st.latex(rf"V_{{design}} = {cal['V_cap']:,.0f} \text{{ kg}}")
     
-    st.markdown(f"**Step 2: กำลังรับแรงเฉือนที่ยอมให้ ({method})**")
-    if method == "ASD":
-        st.latex(rf"V_{{allow}} = \frac{{V_n}}{{\Omega}} = \frac{{{cal['Vn']:,.0f}}}{{1.50}} = \mathbf{{{cal['V_cap']:,.0f}}} \text{{ kg}}")
-    else:
-        st.latex(rf"V_u = \phi V_n = 1.00 \times {cal['Vn']:,.0f} = \mathbf{{{cal['V_cap']:,.0f}}} \text{{ kg}}")
-
-    st.markdown("**Step 3: แปลงเป็นน้ำหนักแผ่ ($w$)**")
-    st.latex(r"w_{shear} = \frac{2 V}{L} \times 100")
-    st.latex(rf"w_{{shear}} = \frac{{2 \times {cal['V_cap']:,.0f}}}{{{cal['L_cm']:.0f}}} \times 100 = \mathbf{{{cal['ws']:,.0f}}} \text{{ kg/m}}")
-
+    st.write("2.2 แปลงเป็นน้ำหนักแผ่ประลัยบนคาน ($w_{shear}$):")
+    st.info("สำหรับคานช่วงเดียว (Simple Beam) แรงเฉือนสูงสุดคือ $V_{max} = wL/2$ ดังนั้น $w = 2V/L$")
+    st.latex(rf"w_{{shear}} = \frac{{2 \times V_{{design}}}}{{L}} = \frac{{2 \times {cal['V_cap']:,.0f}}}{{{cal['L_cm']:.0f}}} \times 100")
+    st.latex(rf"w_{{shear}} = \mathbf{{{cal['ws']:,.0f}}} \text{{ kg/m}} \quad \text{--- (1)}")
+    
     st.markdown("---")
-
+    
     # 3. Moment
-    st.markdown("#### 3. ตรวจสอบโมเมนต์ดัด (Moment Capacity)")
-    st.markdown("**Step 1: กำลังรับโมเมนต์ระบุ ($M_n$)**")
-    st.latex(rf"M_n = F_y \times Z_x")
-    st.latex(rf"M_n = {Fy} \times {props['Zx']} = \mathbf{{{cal['Mn']:,.0f}}} \text{{ kg-cm}}")
-
-    st.markdown(f"**Step 2: กำลังรับโมเมนต์ที่ยอมให้ ({method})**")
-    if method == "ASD":
-        st.latex(rf"M_{{allow}} = \frac{{M_n}}{{\Omega}} = \frac{{{cal['Mn']:,.0f}}}{{1.67}} = \mathbf{{{cal['M_cap']:,.0f}}} \text{{ kg-cm}}")
-    else:
-        st.latex(rf"M_u = \phi M_n = 0.90 \times {cal['Mn']:,.0f} = \mathbf{{{cal['M_cap']:,.0f}}} \text{{ kg-cm}}")
-
-    st.markdown("**Step 3: แปลงเป็นน้ำหนักแผ่ ($w$)**")
-    st.latex(r"w_{moment} = \frac{8 M}{L^2} \times 100")
-    st.latex(rf"w_{{moment}} = \frac{{8 \times {cal['M_cap']:,.0f}}}{{{cal['L_cm']:.0f}^2}} \times 100 = \mathbf{{{cal['wm']:,.0f}}} \text{{ kg/m}}")
-
-    st.markdown("---")
-
-    # 4. Deflection
-    st.markdown("#### 4. ตรวจสอบระยะแอ่นตัว (Deflection Limit)")
-    st.markdown("**Step 1: ระยะแอ่นตัวที่ยอมให้ ($\delta_{max}$)**")
-    st.latex(rf"\delta_{{allow}} = \frac{{L}}{{360}} = \frac{{{cal['L_cm']:.0f}}}{{360}} = \mathbf{{{cal['delta_allow']:.2f}}} \text{{ cm}}")
-
-    st.markdown("**Step 2: คำนวณน้ำหนักแผ่ย้อนกลับ ($w$)**")
-    st.latex(r"w_{deflect} = \frac{384 E I \delta}{5 L^4} \times 100")
+    st.markdown("#### 3. คำนวณความสามารถรับโมเมนต์ดัด (Moment Check)")
+    st.write("3.1 หาโมเมนต์ระบุ ($M_n$) และค่าที่ยอมให้:")
+    st.latex(rf"M_n = F_y Z_x = {Fy} \times {props['Zx']} = {cal['Mn']:,.0f} \text{{ kg-cm}}")
+    st.latex(rf"{cal['design_m_str']} \Rightarrow \text{{ใช้ }} {cal['factor_b_str']}")
+    st.latex(rf"M_{{design}} = {cal['M_cap']:,.0f} \text{{ kg-cm}}")
     
-    # Substitution detail
-    st.write("แทนค่า:")
+    st.write("3.2 แปลงเป็นน้ำหนักแผ่ประลัยบนคาน ($w_{moment}$):")
+    st.info("สำหรับคานช่วงเดียว โมเมนต์สูงสุดคือ $M_{max} = wL^2/8$ ดังนั้น $w = 8M/L^2$")
+    st.latex(rf"w_{{moment}} = \frac{{8 \times M_{{design}}}}{{L^2}} = \frac{{8 \times {cal['M_cap']:,.0f}}}{{{cal['L_cm']:.0f}^2}} \times 100")
+    st.latex(rf"w_{{moment}} = \mathbf{{{cal['wm']:,.0f}}} \text{{ kg/m}} \quad \text{--- (2)}")
+    
+    st.markdown("---")
+    
+    # 4. Deflection
+    st.markdown("#### 4. ตรวจสอบการแอ่นตัว (Deflection Check)")
+    st.write("4.1 ระยะแอ่นตัวที่ยอมให้ ($\delta_{max}$):")
+    st.latex(rf"\delta_{{allow}} = L/360 = {cal['L_cm']:.0f}/360 = {cal['delta_allow']:.2f} \text{{ cm}}")
+    
+    st.write("4.2 หาน้ำหนักแผ่ที่ทำให้เกิดการแอ่นตัวพิกัด ($w_{deflect}$):")
+    st.info("สูตรระยะแอ่นตัว: $\delta = 5wL^4 / 384EI \Rightarrow$ ย้ายข้างหา $w$")
+    
     num = f"384 \\times {cal['E_ksc']:,.0f} \\times {props['Ix']:,} \\times {cal['delta_allow']:.2f}"
     den = f"5 \\times {cal['L_cm']:.0f}^4"
-    st.latex(rf"w = \frac{{{num}}}{{{den}}} \times 100")
-    st.latex(rf"w_{{deflect}} = \mathbf{{{cal['wd']:,.0f}}} \text{{ kg/m}}")
-
+    st.latex(rf"w_{{deflect}} = \frac{{384 E I \delta}}{{5 L^4}} = \frac{{{num}}}{{{den}}} \times 100")
+    st.latex(rf"w_{{deflect}} = \mathbf{{{cal['wd']:,.0f}}} \text{{ kg/m}} \quad \text{--- (3)}")
+    
     st.markdown("---")
-    st.success(f"✅ **สรุป: รับน้ำหนักได้สูงสุด (Governing) = {cur_gov:,.0f} kg/m**")
-
-# ===== TAB 3: FORMULAS & DERIVATION =====
-with tab3:
-    st.header("📚 ที่มาของสูตร (Reference & Derivation)")
     
-    st.subheader("1. ทำไม $V_n = 0.6 F_y A_w$ ?")
-    st.markdown("""
-    * **ทฤษฎี:** มาจาก **Von Mises Yield Criterion** ซึ่งระบุว่าวัสดุจะเริ่มคราก (Yield) ด้วยแรงเฉือน เมื่อหน่วยแรงเฉือนมีค่าประมาณ $1/\sqrt{3}$ ของหน่วยแรงดึง
-    * **ตัวเลข:** $1/\sqrt{3} \approx 0.577$
-    * **มาตรฐาน AISC:** ปัดตัวเลขให้จำง่ายเป็น **0.60**
-    * **พื้นที่ ($A_w$):** สำหรับ H-Beam จะคิดพื้นที่รับแรงเฉือนเฉพาะส่วนเอว (Web) คือ $D \times t_w$
-    """)
-    st.latex(r"\tau_{yield} \approx 0.577 \sigma_{yield} \Rightarrow V_n = 0.60 F_y A_w")
-
-    st.divider()
-
-    st.subheader("2. ทำไมน้ำหนักแผ่ (w) ถึงใช้สูตรต่างกัน?")
-    st.markdown("มาจากสูตร **Beam Mechanics (Simply Supported)** พื้นฐาน:")
+    # 5. Summary & Logic (THE FINAL STEP)
+    st.markdown("#### 5. สรุปผลการคำนวณ (Conclusion)")
+    st.write("**ขั้นตอนสุดท้าย: เปรียบเทียบค่าทั้ง 3 กรณีเพื่อหาจุดวิกฤต**")
     
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        st.markdown("**ก. กรณีแรงเฉือน (Shear Control):**")
-        st.image("https://calcresource.com/images.beam-reaction.jpg", caption="Shear Diagram (V)", width=200) # Placeholder concept
-        st.latex(r"V_{max} = \frac{wL}{2}")
-        st.write("ย้ายข้างหา $w$:")
-        st.latex(r"w = \frac{2 V_{allow}}{L}")
-
-    with col_f2:
-        st.markdown("**ข. กรณีโมเมนต์ (Moment Control):**")
-        st.latex(r"M_{max} = \frac{wL^2}{8}")
-        st.write("ย้ายข้างหา $w$:")
-        st.latex(r"w = \frac{8 M_{allow}}{L^2}")
-
-    st.divider()
+    col_res1, col_res2, col_res3 = st.columns(3)
+    col_res1.metric("1. Shear Limit", f"{cal['ws']:,.0f} kg/m")
+    col_res2.metric("2. Moment Limit", f"{cal['wm']:,.0f} kg/m")
+    col_res3.metric("3. Deflection Limit", f"{cal['wd']:,.0f} kg/m")
     
-    st.subheader("3. การหาจุดตัดกราฟ (Transition Point Logic)")
-    st.markdown("ทำไมกราฟถึงเปลี่ยนสี? เราหาจุดที่ **ความสามารถรับแรงเฉือน = ความสามารถรับโมเมนต์**")
+    st.write("เลือกค่าน้อยที่สุดเป็น **Total Capacity (Gross Load)**:")
+    st.latex(rf"w_{{gross}} = \min({cal['ws']:,.0f}, {cal['wm']:,.0f}, {cal['wd']:,.0f}) = \mathbf{{{w_gross:,.0f}}} \text{{ kg/m}}")
     
-    st.latex(r"w_{shear} = w_{moment}")
-    st.latex(r"\frac{2V}{L} = \frac{8M}{L^2}")
-    st.write("ตัด $L$ ทั้งสองข้าง และย้ายข้างสมการ:")
-    st.latex(r"L = \frac{4M}{V}")
+    st.write(f"**หักน้ำหนักตัวเองของคานออก ($W_{{beam}} = {props['W']}$ kg/m):**")
+    st.latex(rf"w_{{net}} = w_{{gross}} - W_{{beam}} = {w_gross:,.0f} - {props['W']}")
     
-    st.info("""
-    * **ถ้า $L < 4M/V$:** คานสั้นเกินไป $\to$ แรงเฉือนพังก่อน (Shear Control)
-    * **ถ้า $L > 4M/V$:** คานยาวพอ $\to$ โมเมนต์พังก่อน (Moment Control)
-    """)
+    # Final Result Box
+    st.success(f"✅ **น้ำหนักบรรทุกปลอดภัยสุทธิ (Safe Superimposed Load) = {w_net:,.0f} kg/m**")
+    if method == "ASD":
+        st.caption("ค่านี้คือ Safe Load (DL+LL) ที่ใช้งานได้จริง")
+    else:
+        st.caption("ค่านี้คือ Factored Load ($w_u$) ที่คานรับได้เพิ่มเติมนอกเหนือจากน้ำหนักตัวเอง")
