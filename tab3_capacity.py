@@ -5,13 +5,14 @@ from calculator import core_calculation
 def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
     """
     Tab 3: Capacity Overview & Zones (Revised for Precision)
-    แก้ไข: ใช้ round() แทน int() เพื่อให้ตัวเลขตรงกับ Tab 1 เป๊ะๆ
+    แก้ไข: ขยายช่วงความยาว Span ถึง 30 เมตร
     """
     st.markdown(f"### 📊 Capacity Summary: {section} ({method})")
     st.caption(f"Deflection Limit Criteria: **L/{def_val}**")
     st.markdown("---")
 
     # --- 1. คำนวณหาจุดเปลี่ยน (Critical Transitions) ---
+    # เรียก dummy เพื่อเอาค่า L_vm, L_md (ซึ่งตอนนี้คำนวณจาก M_des_full ใน calculator.py แล้ว ค่าจึงคงที่ถูกต้อง)
     dummy_calc = core_calculation(10.0, Fy, E_gpa, props, method, def_val)
     L_vm = dummy_calc['L_vm']
     L_md = dummy_calc['L_md']
@@ -42,7 +43,8 @@ def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
     * **✅ Net Safe Load:** คือน้ำหนักบรรทุกใช้งานจริง (หักน้ำหนักคาน {props['W']} kg/m ออกแล้ว)
     """)
 
-    spans = range(2, 16) 
+    # [CHANGE] ขยาย Loop ถึง 30 เมตร (range(2, 31) จะได้ค่า 2 ถึง 30)
+    spans = range(2, 31) 
     data = []
 
     for L in spans:
