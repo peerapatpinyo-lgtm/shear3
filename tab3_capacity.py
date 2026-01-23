@@ -4,8 +4,8 @@ from calculator import core_calculation
 
 def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
     """
-    Tab 3: Capacity Overview & Zones (Revised for Clarity & Units)
-    แก้ไข: ระบุหน่วยชัดเจนในทุก Column และรองรับการ Export CSV ที่สมบูรณ์
+    Tab 3: Capacity Overview & Zones (English Version)
+    Revised: clear units in every column, full CSV support.
     """
     st.markdown(f"### 📊 Capacity Summary: {section} ({method})")
     
@@ -17,47 +17,47 @@ def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
     
     st.markdown("---")
 
-    # --- 1. คำนวณหาจุดเปลี่ยน (Critical Transitions) ---
+    # --- 1. Critical Transitions Calculation ---
     dummy_calc = core_calculation(10.0, Fy, E_gpa, props, method, def_val)
     L_vm = dummy_calc['L_vm']
     L_md = dummy_calc['L_md']
 
     # --- 2. Zone Visualization ---
-    st.subheader("1. Governing Control Zones (ช่วงความยาวที่ควบคุมการวิบัติ)")
-    st.caption("แสดงช่วงความยาวที่พฤติกรรมแต่ละแบบมีผลต่อการรับน้ำหนักสูงสุด")
+    st.subheader("1. Governing Control Zones")
+    st.caption("Indicates which failure mode governs the design capacity for a given span length.")
     
     z1, z2, z3 = st.columns(3)
     with z1:
-        st.error(f"**🔴 Short Span (แรงเฉือน)**")
-        st.markdown(f"ความยาว: **1.00 - {L_vm:.2f} m**")
+        st.error(f"**🔴 Short Span (Shear)**")
+        st.markdown(f"Range: **1.00 - {L_vm:.2f} m**")
     with z2:
-        st.warning(f"**🟠 Medium Span (แรงดัด)**")
-        st.markdown(f"ความยาว: **{L_vm:.2f} - {L_md:.2f} m**")
+        st.warning(f"**🟠 Medium Span (Moment)**")
+        st.markdown(f"Range: **{L_vm:.2f} - {L_md:.2f} m**")
     with z3:
-        st.success(f"**🟢 Long Span (ระยะแอ่น)**")
-        st.markdown(f"ความยาว: **> {L_md:.2f} m**")
+        st.success(f"**🟢 Long Span (Deflection)**")
+        st.markdown(f"Range: **> {L_md:.2f} m**")
 
     st.markdown("---")
 
     # --- 3. Look-up Table Generation ---
-    st.subheader(f"2. Capacity Look-up Table (ตารางรับน้ำหนัก)")
+    st.subheader(f"2. Capacity Look-up Table")
     
-    # คำอธิบายวิธีคำนวณ Net Load
+    # Explanation Box
     st.info(f"""
-    **📝 คำอธิบายหน่วยและที่มาของค่า:**
-    * หน่วยของน้ำหนักทั้งหมดในตารางคือ **kg/m (กิโลกรัมต่อเมตร)**
-    * **Gross Capacity:** คือความสามารถรับน้ำหนักรวมของหน้าตัด (ยังไม่ได้หักน้ำหนักตัวคาน)
-    * **✅ Net Safe Load:** คือน้ำหนักบรรทุกปลอดภัยที่ใช้งานได้จริง (Live Load + Superimposed Dead Load)
+    **📝 Legend & Unit Explanation:**
+    * All load values are in **kg/m**.
+    * **Gross Capacity:** The total capacity of the section (before deducting beam weight).
+    * **✅ Net Safe Load:** The actual usable load (Live Load + Superimposed Dead Load).
     
     $$ \\text{{Net Safe Load}} = \\text{{Min}}(\\text{{Shear}}, \\text{{Moment}}, \\text{{Deflection}}) - \\text{{Beam Weight}} ({props['W']} \\text{{ kg/m}}) $$
     """)
 
-    # สร้างข้อมูลช่วง 1 - 30 เมตร
+    # Generate data for 1 - 30 meters
     spans = range(1, 31) 
     data = []
 
     for L in spans:
-        # คำนวณ
+        # Core Calculation
         c = core_calculation(float(L), Fy, E_gpa, props, method, def_val)
         
         # Gross Capacities
@@ -65,21 +65,21 @@ def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
         w_moment = c['wm']
         w_deflect = c['wd']
         
-        # หาค่า Control (Gross)
+        # Find Governing Gross Capacity
         gross_min = min(w_shear, w_moment, w_deflect)
         
-        # Net Load Calculation (ห้ามติดลบ)
+        # Net Load Calculation (Ensure non-negative)
         net_load = max(0, gross_min - props['W'])
 
         # Determine Control Mode
         if gross_min == w_shear: 
-            control_txt = "Shear (แรงเฉือน)"
+            control_txt = "Shear"
         elif gross_min == w_moment: 
-            control_txt = "Moment (แรงดัด)"
+            control_txt = "Moment"
         else: 
-            control_txt = f"Deflection (ระยะแอ่น)"
+            control_txt = f"Deflection"
 
-        # ใช้ชื่อ Column ภาษาอังกฤษที่มีหน่วยกำกับ เพื่อให้ CSV นำไปใช้ต่อได้ง่าย
+        # Append Data (English Headers)
         data.append({
             "Span Length (m)": f"{L:.1f}",
             "✅ Net Safe Load (kg/m)": net_load,
@@ -113,30 +113,30 @@ def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
         column_config={
             "Span Length (m)": st.column_config.TextColumn(
                 "Span Length (m)", 
-                help="ความยาวช่วงคาน (เมตร)"
+                help="Length of the beam span in meters."
             ),
             "✅ Net Safe Load (kg/m)": st.column_config.NumberColumn(
                 "✅ Net Safe Load (kg/m)", 
-                help="น้ำหนักที่รับได้จริง (หักน้ำหนักคานออกแล้ว)",
+                help="Usable load capacity after deducting beam self-weight.",
                 format="%d"
             ),
             "Governing Mode": st.column_config.TextColumn(
                 "Governing Mode",
-                help="ตัวแปรที่ควบคุมการออกแบบ (Shear/Moment/Deflection)"
+                help="The factor limiting the design (Shear, Moment, or Deflection)."
             ),
             "Shear Cap. (kg/m)": st.column_config.NumberColumn(
                 "Shear Cap. (kg/m)", 
-                help="การรับแรงเฉือนสูงสุด (V_design)",
+                help="Gross Shear Capacity (V_design)",
                 format="%d"
             ),
             "Moment Cap. (kg/m)": st.column_config.NumberColumn(
                 "Moment Cap. (kg/m)", 
-                help="การรับแรงดัดสูงสุด (M_design รวมผล LTB)",
+                help="Gross Moment Capacity (M_design including LTB)",
                 format="%d"
             ),
             "Deflection Limit (kg/m)": st.column_config.NumberColumn(
                 "Deflection (kg/m)", 
-                help=f"น้ำหนักที่ทำให้แอ่นตัวถึงพิกัด L/{def_val}",
+                help=f"Load causing deflection equal to limit L/{def_val}",
                 format="%d"
             ),
         },
@@ -146,7 +146,7 @@ def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
     # Export CSV
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="📥 Download CSV Table (with Units)",
+        label="📥 Download CSV Table",
         data=csv,
         file_name=f'Capacity_Table_{section}_L{def_val}.csv',
         mime='text/csv',
