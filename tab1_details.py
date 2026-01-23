@@ -2,8 +2,8 @@ import streamlit as st
 
 def render_tab1(c, props, method, Fy, section):
     """
-    Function to render Tab 1: Detailed Calculation Sheet (English Version)
-    With Lateral-Torsional Buckling (LTB) Analysis
+    Function to render Tab 1: Detailed Calculation Sheet
+    Updated to support dynamic Deflection Limit (L/180, L/240, L/360)
     """
     
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
@@ -16,7 +16,8 @@ def render_tab1(c, props, method, Fy, section):
             st.code(f"Design Method : {method}\n"
                     f"Yield Strength: {Fy} ksc\n"
                     f"Modulus (E)   : {c['E_ksc']/10197.162:.0f} GPa\n"
-                    f"Span Length   : {c['L_cm']/100:.2f} m")
+                    f"Span Length   : {c['L_cm']/100:.2f} m\n"
+                    f"Deflect Limit : L/{c.get('def_limit', 360)}")
         with ds_c2:
             st.markdown("**🗂️ Database Constants (ค่าจากฐานข้อมูล):**")
             st.caption(f"Retrieved from `database.SYS_H_BEAMS` key: `{section}`")
@@ -33,8 +34,8 @@ def render_tab1(c, props, method, Fy, section):
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Depth (D)", f"{props['D']} mm", delta="Database", delta_color="off")
-    c2.metric("Width (B)", f"{props.get('B', '-')} mm", delta="Database", delta_color="off")
-    c3.metric("Flange (tf)", f"{props.get('tf', '-')} mm", delta="Database", delta_color="off")
+    c2.metric("Width (B)", f"{props.get('B', 100)} mm", delta="Database", delta_color="off")
+    c3.metric("Flange (tf)", f"{props.get('tf', 10)} mm", delta="Database", delta_color="off")
     c4.metric("Web (tw)", f"{props['tw']} mm", delta="Database", delta_color="off")
     
     c1b, c2b, c3b, c4b = st.columns(4)
@@ -81,7 +82,13 @@ def render_tab1(c, props, method, Fy, section):
     lz1, lz2, lz3 = st.columns(3)
     lz1.metric("Limit Lp (Yield)", f"{c['Lp']:.2f} m", help="Zone 1 Limit")
     lz2.metric("Limit Lr (Elastic)", f"{c['Lr']:.2f} m", help="Zone 2 Limit")
-    lz3.info(f"Current State: **{c['Zone']}**")
+    
+    # Color condition for Zone
+    if "Zone 1" in c['Zone']: z_color = "green"
+    elif "Zone 2" in c['Zone']: z_color = "orange"
+    else: z_color = "red"
+    
+    lz3.markdown(f"Current State:\n\n:{z_color}[**{c['Zone']}**]")
     
     if c['Lb'] <= c['Lp']:
         st.success(f"✅ Full Plastic Moment Capacity ($L_b \le L_p$)")
@@ -115,14 +122,17 @@ def render_tab1(c, props, method, Fy, section):
 
     # === 4. DEFLECTION ===
     st.subheader("4. Deflection Control")
-    st.write(f"Allowable Deflection Limit ($L/360$):")
-    st.latex(rf"\delta_{{allow}} = \frac{{{c['L_cm']:.0f} \text{{ (User Input)}}}}{{360}} = {c['delta']:.2f} \text{{ cm}}")
+    
+    # [UPDATED Logic] ดึงค่า Limit ที่เลือกมาแสดง
+    limit_val = c.get('def_limit', 360) 
+    
+    st.write(f"Allowable Deflection Limit (**L/{limit_val}**):")
+    st.latex(rf"\delta_{{allow}} = \frac{{{c['L_cm']:.0f} \text{{ (Span)}}}}{{{limit_val}}} = \mathbf{{{c['delta']:.2f}}} \text{{ cm}}")
     
     st.markdown("**Step 4.1: Convert to Safe Uniform Load ($w_d$)**")
-    st.write("Using Properties from Database:")
-    st.write(f"- $I_x$ (Inertia) = {props['Ix']:,} cm⁴")
-    st.write(f"- $E$ (Modulus) = {c['E_ksc']:,.0f} ksc")
+    st.write(f"Using $I_x = {props['Ix']:,}$ cm⁴ and $E = {c['E_ksc']:,.0f}$ ksc")
     
+    st.latex(rf"w_d = \frac{{384 \times E \times I_x \times \delta_{{allow}}}}{{5 \times L^4}} \times 100")
     st.latex(rf"w_d = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,} \times {c['delta']:.2f}}}{{5 \times {c['L_cm']:.0f}^4}} \times 100")
     st.latex(rf"\therefore w_d = \mathbf{{{c['wd']:,.0f}}} \text{{ kg/m}}")
     
@@ -138,7 +148,7 @@ def render_tab1(c, props, method, Fy, section):
     with res_col1:
         if c['ws'] == final_w: ctrl = "Shear Control"
         elif c['wm'] == final_w: ctrl = f"Moment Control ({c['Zone']})"
-        else: ctrl = "Deflection Control"
+        else: ctrl = f"Deflection Control (L/{limit_val})"
         
         st.info(f"**Governing Case:** {ctrl}")
         st.write(f"- Shear Capacity: {c['ws']:,.0f} kg/m")
@@ -148,48 +158,48 @@ def render_tab1(c, props, method, Fy, section):
     with res_col2:
         st.success(f"✅ **Safe Net Load Capacity:**")
         st.metric(label="Net Load (Excluding Beam Weight)", value=f"{net_w:,.0f} kg/m")
-        st.caption(f"*Beam self-weight ({props['W']} kg/m) from database deducted.")
+        st.caption(f"*Beam self-weight ({props['W']} kg/m) deducted.")
 
     st.markdown("---")
 
     # === 6. TRANSITION DERIVATION ===
     st.subheader("6. Derivation of Critical Lengths")
-    st.write("Critical Length ($L$) is the point where the capacity of two failure modes are **exactly equal**.")
+    st.caption("Critical Length ($L$) is where the capacity of two failure modes are exactly equal.")
 
     with st.expander("Show Formula Derivation & Calculation"):
-        # CASE 1
+        # CASE 1: Shear vs Moment
         st.markdown("#### 6.1 Shear $\leftrightarrow$ Moment Transition ($L_{v-m}$)")
-        st.write("Occurs when Shear Capacity ($w_s$) equals Moment Capacity ($w_m$)")
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("**1. Setup Equation:**")
-            st.latex(r"\frac{2 V_{design}}{L} = \frac{8 M_{design}}{L^2}")
-            st.write("Solve for $L$:")
-            st.latex(r"L = \frac{4 M_{design}}{V_{design}}")
+            st.markdown("**Setup Equation:**")
+            st.latex(r"\frac{2 V_{design}}{L} = \frac{8 M_{design}}{L^2} \Rightarrow L = \frac{4 M_{design}}{V_{design}}")
         with c2:
-            st.markdown("**2. Substitution:**")
-            st.latex(rf"L = \frac{{4 \times {c['M_des']:,.0f}}}{{{c['V_des']:,.0f}}} \text{{ (cm)}}")
-            st.latex(rf"L = {c['L_vm']*100:,.2f} \text{{ cm}}")
-            st.success(f"Convert to meters = {c['L_vm']:.2f} m")
+            st.markdown("**Substitution:**")
+            st.latex(rf"L = \frac{{4 \times {c['M_des']:,.0f}}}{{{c['V_des']:,.0f}}} = {c['L_vm']*100:,.1f} \text{{ cm}}")
+            st.success(f"= {c['L_vm']:.2f} m")
 
         st.markdown("---")
 
-        # CASE 2
+        # CASE 2: Moment vs Deflection (UPDATED Dynamic Formula)
         st.markdown("#### 6.2 Moment $\leftrightarrow$ Deflection Transition ($L_{m-d}$)")
-        st.write("Occurs when Moment Capacity ($w_m$) equals Deflection Limit ($w_d$)")
         c3, c4 = st.columns(2)
         with c3:
-            st.markdown("**1. Setup Equation:**")
-            st.write("Where $w_d$ is derived from $\delta = L/360$")
-            st.latex(r"\frac{8 M_{design}}{L^2} = \frac{384 E I (L/360)}{5 L^4}")
-            st.write("Solve for $L$:")
-            st.latex(r"L = \frac{384 E I}{14400 M_{design}}")
+            st.markdown("**Setup Equation:**")
+            st.write(f"Equating Moment ($w_m$) and Deflection ($w_d$) at $L/{limit_val}$:")
+            # Formula derivation:
+            # 8M/L^2 = (384 E I / 5 L^3) * (1/Limit)
+            # 8M = (384 E I / 5 L Limit)
+            # L = (384 E I) / (40 M Limit)
+            constant_denom = 40 * limit_val
+            st.latex(rf"L = \frac{{384 E I}}{{40 \times M_{{design}} \times {limit_val}}}")
+        
         with c4:
-            st.markdown("**2. Substitution:**")
-            st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{14400 \times {c['M_des']:,.0f}}}")
-            st.latex(rf"L = {c['L_md']*100:,.2f} \text{{ cm}}")
-            st.success(f"Convert to meters = {c['L_md']:.2f} m")
+            st.markdown("**Substitution:**")
+            denom_val = 40 * c['M_des'] * limit_val
+            st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{{denom_val:,.0f}}}")
+            st.latex(rf"L = {c['L_md']*100:,.1f} \text{{ cm}}")
+            st.success(f"= {c['L_md']:.2f} m")
 
     col_sum1, col_sum2 = st.columns(2)
-    col_sum1.info(f"**📍 Shear/Moment Transition:**\n\n $L = {c['L_vm']:.2f}$ m")
-    col_sum2.info(f"**📍 Moment/Deflection Transition:**\n\n $L = {c['L_md']:.2f}$ m")
+    col_sum1.info(f"**📍 Shear/Moment Switch:** $L = {c['L_vm']:.2f}$ m")
+    col_sum2.info(f"**📍 Moment/Deflection Switch:** $L = {c['L_md']:.2f}$ m")
