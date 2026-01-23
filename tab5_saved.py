@@ -7,7 +7,7 @@ from calculator import core_calculation
 
 def render_tab5(method, Fy, E_gpa, def_limit):
     st.markdown("### 📊 Master Structural Timeline")
-    st.caption(f"Timeline วิเคราะห์พฤติกรรมคาน: Shear (แดง) ➔ Moment (ส้ม) ➔ Deflection (เขียว) | Criteria: **L/{def_limit}**")
+    st.caption(f"Beam Behavior Analysis: Shear (Red) ➔ Moment (Orange) ➔ Deflection (Green) | Criteria: **L/{def_limit}**")
 
     # --- 1. Data Processing ---
     all_sections = sorted(SYS_H_BEAMS.keys(), key=lambda x: int(x.split('x')[0].split('-')[1]))
@@ -24,22 +24,25 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         
         # 1.2 Critical Points
         L_vm = c['L_vm']  # Shear Limit
-        L_md = c['L_md']  # Moment Limit / Deflect Start
+        L_md = c['L_md']  # Moment Limit / Deflection Start
         
         # 1.3 Load Scenarios
         if L_vm > 0:
+            # Max Load at Shear Limit (Strength Based)
             w_max_shear_limit = (2 * c['V_des'] / (L_vm * 100)) * 100 
         else:
             w_max_shear_limit = 0
             
         w_75 = 0.75 * w_max_shear_limit
         
+        # Span at 75% Load (Moment Based)
         if w_75 > 0:
             L_75 = np.sqrt((8 * c['M_des']) / (w_75 / 100)) / 100 
         else:
             L_75 = 0
 
-        # 1.4 Auto-Scaling
+        # 1.4 Auto-Scaling for Graph
+        # Ensure Green Zone covers the L_75 point
         max_dist = max(L_md, L_75)
         visual_end_point = max(max_dist * 1.15, L_md + 1.0) 
         L_deflect_width = max(0, visual_end_point - L_md)
@@ -48,11 +51,14 @@ def render_tab5(method, Fy, E_gpa, def_limit):
             "Section": section_name,
             "Weight": props['W'],
             "Ix": props['Ix'],
+            # Graph Data
             "L_shear": L_vm,
             "L_moment_width": max(0, L_md - L_vm),
             "L_deflect_width": L_deflect_width,
+            # Reference Points
             "Ref_Start_Moment": L_vm,
             "Ref_Start_Deflect": L_md,
+            # Scenarios
             "L_75": L_75,
             "Max_Load": w_max_shear_limit,
             "Load_75": w_75
@@ -70,7 +76,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         y=df['Section'], x=df['L_shear'],
         name='Shear Control', orientation='h',
         marker=dict(color='#d9534f', line=dict(width=0)),
-        hovertemplate="<b>%{y}</b><br>🔴 <b>Shear Zone</b>: 0 - %{x:.2f} m<extra></extra>"
+        hovertemplate="<b>%{y}</b><br>🔴 <b>Shear Zone</b>: 0 - %{x:.2f} m<br><i>(Shear Force Controlled)</i><extra></extra>"
     ))
 
     # Layer 2: Moment (Orange)
@@ -79,18 +85,18 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         name='Moment Control', orientation='h',
         marker=dict(color='#f0ad4e', line=dict(width=0)),
         base=df['L_shear'],
-        hovertemplate="🟠 <b>Moment Zone</b>: %{base:.2f} - %{customdata:.2f} m<extra></extra>",
+        hovertemplate="🟠 <b>Moment Zone</b>: %{base:.2f} - %{customdata:.2f} m<br><i>(Bending Moment Controlled)</i><extra></extra>",
         customdata=df['Ref_Start_Deflect']
     ))
 
-    # Layer 3: Deflection (Green) - FIXED LINE IS HERE
+    # Layer 3: Deflection (Green)
+    # Using f-string for Python variables, double curly braces {{}} for Plotly variables
     fig.add_trace(go.Bar(
         y=df['Section'], x=df['L_deflect_width'],
         name='Deflection Control', orientation='h',
         marker=dict(color='#5cb85c', opacity=0.4, line=dict(width=0)),
         base=df['Ref_Start_Deflect'],
-        # ใช้ f-string และ escape ปีกกา Plotly เป็น {{...}}
-        hovertemplate=f"🟢 <b>Deflection Zone</b>: > %{{base:.2f}} m<br><i>(Check L/{def_limit})</i><extra></extra>"
+        hovertemplate=f"🟢 <b>Deflection Zone</b>: > %{{base:.2f}} m<br><i>(Check L/{def_limit} Limit)</i><extra></extra>"
     ))
 
     # Layer 4: 75% Point
@@ -118,6 +124,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     st.markdown("### 📋 Detailed Specification Table")
     
     df_display = df.copy()
+    # Formatting ranges as strings
     df_display['Moment Range'] = df.apply(lambda r: f"{r['Ref_Start_Moment']:.2f} - {r['Ref_Start_Deflect']:.2f}", axis=1)
     df_display['Deflect Start'] = df.apply(lambda r: f"> {r['Ref_Start_Deflect']:.2f}", axis=1)
 
@@ -128,12 +135,13 @@ def render_tab5(method, Fy, E_gpa, def_limit):
             "Section": st.column_config.TextColumn("Section", pinned=True),
             "Weight": st.column_config.NumberColumn("Wt (kg/m)", format="%.1f"),
             "Ix": st.column_config.NumberColumn("Ix (cm⁴)", format="%d"),
-            "L_shear": st.column_config.NumberColumn("Shear Limit", format="%.2f", help="ระยะสิ้นสุด Shear Zone (m)"),
-            "Moment Range": st.column_config.TextColumn("Moment Zone (m)", width="medium"),
-            "Deflect Start": st.column_config.TextColumn("Deflect Zone", width="small"),
-            "L_75": st.column_config.ProgressColumn("Span @ 75%", format="%.2f m", min_value=0, max_value=float(df["L_75"].max())),
+            "L_shear": st.column_config.NumberColumn("Shear Limit", format="%.2f", help="End of Shear Zone (m)"),
+            "Moment Range": st.column_config.TextColumn("Moment Zone (m)", width="medium", help="Optimal range controlled by Bending Moment"),
+            "Deflect Start": st.column_config.TextColumn("Deflect Start", width="small", help=f"Spans greater than this are controlled by Deflection (L/{def_limit})"),
+            "L_75": st.column_config.ProgressColumn("Span @ 75%", format="%.2f m", min_value=0, max_value=float(df["L_75"].max()), help="Feasible span at 75% Load Capacity"),
             "Max_Load": st.column_config.NumberColumn("Max Load", format="%d"),
             "Load_75": st.column_config.NumberColumn("Load 75%", format="%d"),
+            # Hide internal columns
             "L_moment_width": None, "L_deflect_width": None, "Ref_Start_Moment": None, "Ref_Start_Deflect": None
         }
     )
@@ -143,23 +151,24 @@ def render_tab5(method, Fy, E_gpa, def_limit):
 
     # --- 4. Methodology ---
     st.markdown("---")
-    with st.expander("🧮 ที่มาการคำนวณ Span @ 75% (Calculation Methodology)", expanded=True):
+    with st.expander("🧮 Calculation Methodology for Span @ 75%", expanded=True):
         st.markdown(r"""
-        ค่า **Span @ 75%** คำนวณตามหลักการ **Strength Limit State** เพื่อหาระยะพาดที่เหมาะสมเมื่อลดน้ำหนักบรรทุกลง:
+        The **Span @ 75%** value is calculated based on the **Strength Limit State** to determine the feasible span length when the design load is reduced. The process is as follows:
         
-        **1. หาค่า Max Load ($w_{max}$):**
-        คำนวณจากจุดที่รับแรงเฉือนได้สูงสุด (Shear Capacity Limit) ซึ่งถือเป็นจุดที่หน้าตัดทำงานได้เต็มประสิทธิภาพที่สุด
+        **1. Determine Max Load ($w_{max}$):**
+        Calculate the maximum uniform load at the **Shear Limit**. This point represents the theoretical maximum efficiency where Shear Capacity is fully utilized.
         $$ w_{max} = \frac{2 \times V_{design}}{L_{shear}} $$
         
-        **2. ลดน้ำหนักลงเหลือ 75%:**
-        จำลองสถานการณ์ใช้งานจริง โดยลดน้ำหนักบรรทุกลงจากจุดวิกฤต
+        **2. Apply Load Reduction (75%):**
+        Simulate a realistic usage scenario by reducing the load to 75% of the maximum capacity.
         $$ w_{75\%} = 0.75 \times w_{max} $$
         
-        **3. คำนวณระยะพาดใหม่ ($L_{75}$):**
-        คำนวณหาว่าเมื่อ Load เบาลง คานจะยื่นยาวออกไปได้ไกลแค่ไหน จนกว่าจะชนขีดจำกัดของโมเมนต์ดัด ($M_{design}$)
+        **3. Calculate New Span ($L_{75}$):**
+        Determine the new maximum span length for the reduced load, governed by the Bending Moment Capacity ($M_{design}$).
         
         $$ M_{design} = \frac{w L^2}{8} \quad \Rightarrow \quad L_{75} = \sqrt{\frac{8 \times M_{design}}{w_{75\%}}} $$
         
         ---
-        > **⚠️ ข้อควรระวัง (Note):** > การคำนวณนี้คิดจากความแข็งแรง (Strength) เป็นหลัก หากจุด **Span @ 75%** ในกราฟตกอยู่ใน **โซนสีเขียว (Deflection Zone)** > แสดงว่าคานรับน้ำหนักไหว แต่จะเกิดการแอ่นตัวเกินพิกัด (ตกท้องช้าง) จำเป็นต้องตรวจสอบระยะแอ่นตัวหน้างานอีกครั้ง
+        > **⚠️ Important Note:** > This calculation is based on **Strength** (Moment Capacity). 
+        > If the **Span @ 75%** point (Blue Diamond) falls within the **Green Zone (Deflection Zone)** on the chart, it indicates that while the beam is strong enough to carry the load, it will likely exceed the deflection limit (Sagging).
         """)
