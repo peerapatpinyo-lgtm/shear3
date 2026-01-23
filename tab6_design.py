@@ -8,18 +8,20 @@ from drawer_3d import create_connection_figure
 # 📐 HELPER: COMPATIBILITY CHECKER
 # ==========================================
 def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
-    """คำนวณจำนวนแถวสูงสุดที่เป็นไปได้ในคานนี้"""
-    # พื้นที่ใช้งานจริง (T-distance)
+    """Calculate the maximum number of rows possible for this beam depth."""
+    # Workable T-distance
     workable_depth = beam_d - (2 * k_dist) 
-    # หรือเอาแบบ Safety: Web Depth - Clearances
+    # Or strict clearance: Web Depth - Clearances
     available_h = beam_d - (2 * beam_tf) - margin_top - margin_bot
     
-    # คำนวณ max rows: h = 2*lev + (n-1)*s
-    # available_h >= 2*lev + (n-1)*s
+    # Formula: h_plate = 2*lev + (n-1)*s
+    # We need: available_h >= h_plate
     if available_h <= (2 * lev):
         return 0
+    
+    # derived from: available_h - 2*lev >= (n-1)*s
     max_n = int(((available_h - (2 * lev)) / pitch) + 1)
-    return max(1, max_n)
+    return max(0, max_n)
 
 # ==========================================
 # 🏗️ MAIN UI
@@ -45,7 +47,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             bm_D = beam['D'] * d_factor
             bm_Tw = beam.get('t1', 6.0)
             bm_Tf = beam.get('t2', 9.0)
-            k_des = 30 # สมมติค่า k (ระยะโค้ง) หรือดึงจาก DB
+            k_des = 30 # Assumed k distance
             
             st.caption(f"Depth: {bm_D:.0f} | Web: {bm_Tw} | Workable T: {bm_D - 2*k_des:.0f} mm")
             
@@ -60,7 +62,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             d_b = float(bolt_dia.replace("M",""))
             
             # Detailed Condition
-            thread_cond = st.radio("Thread Condition", ["N (Included in Shear)", "X (Excluded)"], index=0, help="N: เกลียวอยู่ในระนาบเฉือน (Capacity ต่ำกว่า)\nX: เกลียวอยู่นอกระนาบเฉือน")
+            thread_cond = st.radio("Thread Condition", ["N (Included in Shear)", "X (Excluded)"], index=0, help="N: Threads in shear plane\nX: Threads excluded from shear plane")
             hole_type = st.selectbox("Hole Type", ["STD (Standard)", "OVS (Oversize)", "SSL (Short Slot)", "LSL (Long Slot)"])
             
             st.info(f"Hole Size: {d_b + (2 if d_b < 24 else 3)} mm")
@@ -72,7 +74,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             plate_t = c3.selectbox("Thick (tp)", [6, 9, 10, 12, 16, 19, 20, 25], index=3)
             weld_sz = c4.selectbox("Weld (mm)", [4, 5, 6, 8, 10], index=2, help="Fillet weld size at support")
 
-        # --- D. GEOMETRY LAYOUT (CRITICAL) ---
+        # --- D. GEOMETRY LAYOUT (CRITICAL FIX APPLIED) ---
         with st.expander("4️⃣ Layout & Dimensions", expanded=True):
             
             # 1. Pitch & Edge Controls
@@ -81,12 +83,30 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             pitch = col_g1.number_input("Pitch (s)", value=int(3*d_b), min_value=int(2.67*d_b), help="Distance center-to-center")
             lev = col_g2.number_input("V-Edge (Lev)", value=int(1.5*d_b), min_value=int(1.25*d_b))
             
-            # 2. Row Calculation & Validation
-            # คำนวณ Max Rows ที่คานนี้รับได้
-            max_rows_allow = get_max_rows(bm_D, bm_Tf, k_des, 10, 10, pitch, lev)
+            # 2. Row Calculation & Validation (FIXED LOGIC)
+            # Calculate physical limit
+            max_rows_physical = get_max_rows(bm_D, bm_Tf, k_des, 10, 10, pitch, lev)
             
-            st.markdown(f"**Row Config (Max: {max_rows_allow}):**")
-            n_rows = st.number_input("No. of Rows", min_value=2, max_value=max(2, max_rows_allow), value=min(3, max_rows_allow))
+            st.markdown(f"**Row Config (Max Fit: {max_rows_physical}):**")
+            
+            # --- SAFE WIDGET LOGIC ---
+            # Ensure widget min/max are valid (min must be <= max)
+            # We enforce min_value=2 for the widget to exist properly, 
+            # even if the beam can only hold 0 or 1 row.
+            w_min = 2
+            w_max = max(2, max_rows_physical) 
+            w_default = max(2, min(3, max_rows_physical)) # Try to be 3, but clamp to limits
+
+            n_rows = st.number_input(
+                "No. of Rows", 
+                min_value=w_min, 
+                max_value=w_max, 
+                value=w_default
+            )
+            
+            # Visual Warning if physical geometry fails
+            if max_rows_physical < 2:
+                st.warning(f"⚠️ Beam is too shallow for 2 rows with current Pitch/Lev! (Max possible: {max_rows_physical})")
             
             # 3. Horizontal Setup
             st.markdown("**Horizontal Setup:**")
