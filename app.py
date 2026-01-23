@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
@@ -19,6 +18,15 @@ with st.sidebar:
     Fy = st.number_input("Fy (Yield Strength) [ksc]", value=2400)
     E_gpa = st.number_input("E (Modulus) [GPa]", value=200)
     
+    # [NEW] Deflection Limit Selection (เลือกเกณฑ์การแอ่นตัว)
+    st.write("---")
+    st.write("**Deflection Limit (เกณฑ์การแอ่นตัว):**")
+    def_option = st.selectbox("Select Limit", 
+                              ["L/360 (General/Floor)", "L/240 (Roof)", "L/180 (Industrial)"], 
+                              index=0)
+    # แปลงข้อความให้เป็นตัวเลข (360, 240, 180)
+    def_val = int(def_option.split('/')[1].split()[0])
+    
     st.header("2. Single Section Analysis")
     # เรียงลำดับหน้าตัดตามขนาด
     sort_list = sorted(SYS_H_BEAMS.keys(), key=lambda x: int(x.split('x')[0].split('-')[1]))
@@ -27,7 +35,8 @@ with st.sidebar:
 
 # --- Process (Single Section) ---
 props = SYS_H_BEAMS[section]
-c = core_calculation(L_input, Fy, E_gpa, props, method)
+# ส่ง def_val เข้าไปคำนวณด้วย
+c = core_calculation(L_input, Fy, E_gpa, props, method, def_val)
 final_w = min(c['ws'], c['wm'], c['wd'])
 
 # --- Display Tabs ---
@@ -42,19 +51,22 @@ t1, t2, t3, t4 = st.tabs([
 with t1:
     render_tab1(c, props, method, Fy, section)
 
-# === TAB 2: Interactive Graph (FIXED & IMPROVED) ===
+# === TAB 2: Interactive Graph ===
 with t2:
     st.subheader(f"📈 Capacity Envelope Analysis: {section}")
-    st.caption("กราฟแสดงขีดความสามารถในการรับน้ำหนักเทียบกับความยาวช่วงคาน (พื้นที่สีเทาคือโซนที่ปลอดภัย)")
+    st.caption(f"กราฟแสดงขีดความสามารถรับน้ำหนัก (Deflection Limit: **L/{def_val}**)")
 
     # 1. เตรียมข้อมูลสำหรับ Plot
     L_max = max(15, c['L_md']*1.2, L_input*1.5)
     x = np.linspace(0.5, L_max, 400)
     
     # คำนวณเส้น Limit ต่างๆ
-    ys = (2 * c['V_des'] / (x*100)) * 100
-    ym = (8 * c['M_des'] / (x*100)**2) * 100
-    k_def = (384 * c['E_ksc'] * props['Ix']) / 1800
+    ys = (2 * c['V_des'] / (x*100)) * 100  # Shear Curve
+    ym = (8 * c['M_des'] / (x*100)**2) * 100 # Moment Curve
+    
+    # [FIXED] Deflection Curve สูตรไดนามิกตาม def_val ที่เลือก
+    # สูตร: w = (384 EI) / (5 * Ratio * L^3)
+    k_def = (384 * c['E_ksc'] * props['Ix']) / (5 * def_val)
     yd = (k_def / (x*100)**3) * 100
     
     # เส้น Capacity จริง (ค่าต่ำสุดของทั้ง 3 เส้น)
@@ -63,7 +75,7 @@ with t2:
     
     fig = go.Figure()
 
-    # 2. เพิ่มพื้นที่เงา (Safe Zone Fill) - พื้นที่ใต้กราฟที่ปลอดภัย
+    # 2. เพิ่มพื้นที่เงา (Safe Zone Fill)
     fig.add_trace(go.Scatter(
         x=x, y=y_gov,
         fill='tozeroy',
@@ -81,7 +93,7 @@ with t2:
                              hovertemplate="Shear Limit: %{y:,.0f} kg/m<extra></extra>"))
     fig.add_trace(go.Scatter(x=x, y=ym, name='Moment Limit', line=dict(color='#f0ad4e', **line_styles),
                              hovertemplate="Moment Limit: %{y:,.0f} kg/m<extra></extra>"))
-    fig.add_trace(go.Scatter(x=x, y=yd, name='Deflection Limit', line=dict(color='#5cb85c', **line_styles),
+    fig.add_trace(go.Scatter(x=x, y=yd, name=f'Deflection (L/{def_val})', line=dict(color='#5cb85c', **line_styles),
                              hovertemplate="Deflection Limit: %{y:,.0f} kg/m<extra></extra>"))
 
     # 4. เส้นขอบความสามารถสูงสุด (Governing Capacity - เส้นทึบดำ)
@@ -102,7 +114,8 @@ with t2:
         name='Your Design'
     ))
 
-    # 6. ตกแต่ง Layout และ Background Zones (ใช้ Annotation แยกเพื่อป้องกัน Error)
+    # 6. Background Zones (ปรับปรุงให้ไม่ Error และตรงกับค่าที่คำนวณมา)
+    # L_vm และ L_md ถูกคำนวณมาจาก calculator.py โดยใช้ def_val ที่ถูกต้องแล้ว
     
     # Zone 1: Shear
     fig.add_vrect(x0=0, x1=c['L_vm'], fillcolor="#d9534f", opacity=0.05, layer="below", line_width=0)
@@ -134,7 +147,8 @@ with t2:
 
 # === TAB 3: Table ===
 with t3:
-    render_tab3(props, method, Fy, E_gpa, section)
+    # ส่ง def_val ไปคำนวณตารางด้วย
+    render_tab3(props, method, Fy, E_gpa, section, def_val)
 
 # === TAB 4: Master Catalog ===
 with t4:
