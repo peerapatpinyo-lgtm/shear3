@@ -6,13 +6,12 @@ from database import SYS_H_BEAMS
 from calculator import core_calculation
 
 def render_tab6(method, Fy, E_gpa, def_limit):
-    st.markdown("### 🛠️ Design Check (Using 75% Load Scenario)")
-    st.caption("ตรวจสอบหน้าตัดโดยใช้น้ำหนักบรรทุกจากจุดที่มีประสิทธิภาพสูงสุด (75% Efficiency)")
+    st.markdown("### 🛠️ Design Check & Connection")
+    st.caption("ตรวจสอบหน้าตัดและออกแบบจุดต่อ (Bolt & Plate) โดยใช้ Load ที่ 75% Efficiency")
 
     # --- 1. Selection Section ---
     col1, col2 = st.columns([1, 2])
     with col1:
-        # เลือกหน้าตัด
         section_name = st.selectbox(
             "Select Section Size:",
             options=list(SYS_H_BEAMS.keys()),
@@ -20,179 +19,166 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         )
     
     props = SYS_H_BEAMS[section_name]
-    
-    # --- 2. Calculate Reference Load (Based on Tab 5 Logic) ---
-    # เราหา Load ที่จุด Shear Limit (จุดที่แข็งแรงที่สุดทางทฤษฎี)
+    w_sw = props['W']  # Self-Weight
+
+    # --- 2. Calculate Net Capacity ---
     c_ref = core_calculation(10.0, Fy, E_gpa, props, method, def_limit)
     L_vm = c_ref['L_vm']
     
     if L_vm > 0:
-        w_max_cap = (2 * c_ref['V_des'] / (L_vm * 100)) * 100 # kg/m
+        w_gross_capacity = (2 * c_ref['V_des'] / (L_vm * 100)) * 100 
     else:
-        w_max_cap = 0
+        w_gross_capacity = 0
         
-    w_75_target = 0.75 * w_max_cap # Load ที่เราต้องการ Test (External Load)
+    w_net_capacity = max(0, w_gross_capacity - w_sw)
+    w_75_external = 0.75 * w_net_capacity
     
     with col2:
         st.info(f"""
-        **Load Scenario (External Load):**
-        * Max Capacity Point: **{w_max_cap:,.0f}** kg/m (ที่ระยะ {L_vm:.2f} ม.)
-        * **Design Load (75%): {w_75_target:,.0f} kg/m** (ค่าที่จะนำมาตรวจสอบ)
+        **Load Scenario:**
+        * Max External Capacity: **{w_net_capacity:,.0f}** kg/m
+        * **Design Load (75%): {w_75_external:,.0f} kg/m** (ค่าแนะนำ)
         """)
 
     st.markdown("---")
 
-    # --- 3. User Input: Span Length ---
-    # คำนวณ Default Slider ให้พอดีกับ Limit
-    if w_75_target > 0:
-        # ประมาณระยะที่รับได้รับไหว (โดยไม่รวม SW คร่าวๆ) เพื่อตั้งค่า Slider
-        try:
-            val_limit = np.sqrt((8 * c_ref['M_des']) / (w_75_target / 100)) / 100
-        except:
-            val_limit = 6.0
-    else:
-        val_limit = 6.0
-
-    # ป้องกัน Slider Error กรณีค่าเกินขอบเขต
-    default_val = float(val_limit)
-    if default_val > 12.0: default_val = 12.0
-    if default_val < 1.0: default_val = 1.0
-
-    span_input = st.slider(
-        "Adjust Span Length (m):",
-        min_value=1.0,
-        max_value=15.0,
-        value=default_val,
-        step=0.1,
-        help="ปรับระยะพาดเพื่อดูผลลัพธ์ (ค่าน้ำหนักบรรทุกคงที่)"
-    )
-
-    # --- 4. Perform Detailed Check (Rigorous Math) ---
+    # --- 3. Beam Design Check ---
+    st.subheader("1. Beam Analysis")
     
-    # [FIX 1] Total Load = External Load + Self Weight
-    w_sw = props['W']          # kg/m (Self Weight)
-    w_total = w_75_target + w_sw # kg/m (Total Load for Physics)
+    # Slider Setup
+    default_val = 6.0
+    if w_75_external > 0:
+        try:
+            w_total_sim = w_75_external + w_sw
+            val_limit = np.sqrt((8 * c_ref['M_des']) / (w_total_sim / 100)) / 100
+            default_val = min(max(float(val_limit), 1.0), 15.0)
+        except: pass
+
+    col_inp1, col_inp2 = st.columns(2)
+    with col_inp1:
+        span_input = st.slider("Span Length (m):", 1.0, 15.0, default_val, 0.1)
+    with col_inp2:
+        load_input = st.number_input("External Load (kg/m):", value=float(int(w_75_external)), step=100.0)
+
+    # --- Calculation Logic ---
+    w_total_check = load_input + w_sw 
     L_use = span_input
     
-    # [FIX 2] Demand Calculation (With Total Load)
-    # Shear (V_u) - kg
-    V_u = (w_total * L_use) / 2          
+    # Demand
+    V_u = (w_total_check * L_use) / 2          # kg (Shear at Support)
+    M_u = (w_total_check * L_use**2) / 8 * 100 # kg-cm
     
-    # Moment (M_u) - kg-cm
-    # w(kg/m) * L^2(m^2) / 8 = kg-m -> *100 -> kg-cm
-    M_u = (w_total * L_use**2) / 8 * 100 
-    
-    # Deflection (Delta_u) - cm
-    # 5wL^4 / 384EI
-    # w ต้องเป็น kg/cm -> w_total / 100
-    # L ต้องเป็น cm    -> L_use * 100
-    # E ต้องเป็น ksc
-    E_ksc = c_ref['E_ksc'] # [FIX 3] Use calculated E (not hardcoded)
-    I_x = props['Ix']      # cm^4
-    
-    if I_x > 0:
-        delta_u = (5 * (w_total/100) * (L_use*100)**4) / (384 * E_ksc * I_x)
-    else:
-        delta_u = 999.9
-
-    # [FIX 4] Get Capacities (At exact span L_use)
-    # เรียก core calculation ใหม่ด้วยระยะ span จริง เพื่อเช็ค LTB (Lateral Torsional Buckling)
+    # Capacity
     c_check = core_calculation(L_use, Fy, E_gpa, props, method, def_limit)
+    V_n_beam = c_check['V_des']
+    M_n_beam = c_check['M_des']
     
-    V_n = c_check['V_des'] # kg
-    M_n = c_check['M_des'] # kg-cm
-    delta_allow = (L_use * 100) / def_limit # cm
-
-    # --- 5. Ratios & Display ---
-    ratio_v = V_u / V_n if V_n > 0 else 999
-    ratio_m = M_u / M_n if M_n > 0 else 999
-    ratio_d = delta_u / delta_allow if delta_allow > 0 else 999
+    # Ratios
+    ratio_v = V_u / V_n_beam
+    ratio_m = M_u / M_n_beam
     
-    def get_status(ratio):
-        if ratio > 1.0: return "red", "❌ FAIL"
-        if ratio > 0.9: return "orange", "⚠️ WARNING"
-        return "green", "✅ PASS"
-
-    color_v, text_v = get_status(ratio_v)
-    color_m, text_m = get_status(ratio_m)
-    color_d, text_d = get_status(ratio_d)
-
-    st.markdown("#### 🏁 Analysis Results (Includes Self-Weight)")
-    
-    col_res1, col_res2, col_res3 = st.columns(3)
-    
-    with col_res1:
-        st.markdown(f"**Shear Check (V)**")
-        st.progress(min(ratio_v, 1.0))
-        st.markdown(f"Status: :{color_v}[{text_v}]")
-        st.caption(f"Demand ($V_u$): {V_u:,.0f} kg")
-        st.caption(f"Capacity ($V_n$): {V_n:,.0f} kg")
-        st.caption(f"Ratio: **{ratio_v:.2f}**")
-
-    with col_res2:
-        st.markdown(f"**Moment Check (M)**")
-        st.progress(min(ratio_m, 1.0))
-        st.markdown(f"Status: :{color_m}[{text_m}]")
-        st.caption(f"Demand ($M_u$): {M_u/100:,.0f} kg-m")
-        st.caption(f"Capacity ($M_n$): {M_n/100:,.0f} kg-m")
-        st.caption(f"Ratio: **{ratio_m:.2f}**")
-
-    with col_res3:
-        st.markdown(f"**Deflection Check (Δ)**")
-        st.progress(min(ratio_d, 1.0))
-        st.markdown(f"Status: :{color_d}[{text_d}]")
-        st.caption(f"Actual: {delta_u:.2f} cm")
-        st.caption(f"Limit (L/{def_limit}): {delta_allow:.2f} cm")
-        st.caption(f"Ratio: **{ratio_d:.2f}**")
-
-    # --- 6. Interaction Visualization ---
-    st.markdown("---")
-    
-    # Bar Chart for Ratios
-    fig = go.Figure()
-    categories = ['Shear', 'Moment', 'Deflection']
-    ratios = [ratio_v, ratio_m, ratio_d]
-    colors = ['#d9534f' if r > 1 else ('#f0ad4e' if r > 0.9 else '#5cb85c') for r in ratios]
-    
-    fig.add_trace(go.Bar(
-        y=categories,
-        x=ratios,
-        orientation='h',
-        marker_color=colors,
-        text=[f"{r*100:.1f}%" for r in ratios],
-        textposition='auto',
-    ))
-    
-    # Add Limit Line
-    fig.add_shape(type="line", x0=1, y0=-0.5, x1=1, y1=2.5,
-                  line=dict(color="Red", width=3, dash="dash"))
-    fig.add_annotation(x=1, y=2.8, text="LIMIT (1.0)", showarrow=False, font=dict(color="red"))
-
-    fig.update_layout(
-        title=f"Unity Check Ratios @ Span {L_use} m",
-        xaxis_title="Utilization Ratio (Demand / Capacity)",
-        yaxis_title="Criteria",
-        xaxis=dict(range=[0, max(1.2, max(ratios)*1.1)]),
-        height=350,
-        margin=dict(l=20, r=20, t=50, b=20)
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Summary Box
-    final_pass = max(ratios) <= 1.0
-    
-    if final_pass:
-        st.success(f"✅ **PASSED**: หน้าตัด {section_name} สามารถรับน้ำหนัก {w_75_target:,.0f} kg/m (+Self Weight) ที่ระยะ {L_use} เมตร ได้อย่างปลอดภัย")
+    # Display Beam Status (Simplified)
+    beam_pass = ratio_v <= 1.0 and ratio_m <= 1.0
+    if beam_pass:
+        st.success(f"✅ Beam OK! (Shear: {ratio_v:.2f}, Moment: {ratio_m:.2f})")
     else:
-        fail_causes = []
-        if ratio_v > 1: fail_causes.append("Shear")
-        if ratio_m > 1: fail_causes.append("Moment")
-        if ratio_d > 1: fail_causes.append("Deflection")
-        st.error(f"❌ **FAILED**: หน้าตัด {section_name} ไม่ผ่านการตรวจสอบที่ระยะ {L_use} เมตร (สาเหตุ: {', '.join(fail_causes)})")
+        st.error(f"❌ Beam Fail! (Shear: {ratio_v:.2f}, Moment: {ratio_m:.2f})")
+
+    st.markdown("---")
+
+    # ==============================================================================
+    # 🔩 NEW SECTION: CONNECTION DESIGN (BOLT & PLATE)
+    # ==============================================================================
+    st.subheader("2. 🔩 Connection Design (Shear Plate)")
+    st.caption(f"ออกแบบจุดต่อรับแรงเฉือน (Reaction Force: **{V_u:,.0f} kg**) ที่หัวเสา")
+
+    col_conn1, col_conn2 = st.columns([1, 1.5])
+
+    with col_conn1:
+        st.markdown("**Bolt Configuration**")
+        bolt_grade = st.selectbox("Bolt Grade:", ["A325 (High Strength)", "A307 (Ordinary)", "Grade 8.8"], index=0)
+        bolt_size = st.selectbox("Bolt Size:", ["M12", "M16", "M20", "M22", "M24"], index=1)
+        bolt_rows = st.number_input("Number of Bolts (Rows):", min_value=1, max_value=10, value=3)
+        plate_t = st.selectbox("Plate Thickness (mm):", [6, 9, 12, 16, 20, 25], index=1)
+
+    # --- Connection Calculation ---
+    # 1. Bolt Properties
+    bolt_dia_map = {"M12": 1.2, "M16": 1.6, "M20": 2.0, "M22": 2.2, "M24": 2.4} # cm
+    d_b = bolt_dia_map[bolt_size]
+    A_b = (np.pi * d_b**2) / 4 # cm2
+    
+    # Shear Strength (Fnv) approx
+    if bolt_grade == "A307 (Ordinary)":
+        Fnv = 1880 # ksc (approx 27 ksi)
+    else: # A325 or 8.8
+        Fnv = 3720 # ksc (approx 54 ksi)
+
+    # 2. Bolt Shear Capacity (per bolt)
+    # Single Shear Plane (สมมติเป็น Single Plate หรือ Shear Tab)
+    if method == "ASD":
+        omega = 2.0
+        phi = 1.0 # not used
+        Rn_shear_bolt = (Fnv * A_b) / omega
+    else: # LRFD
+        phi = 0.75
+        Rn_shear_bolt = phi * (Fnv * A_b)
+
+    # 3. Bearing Capacity (At Beam Web & Plate)
+    # เราต้องเช็คว่า รูเจาะที่ "เอวคาน (Web)" หรือ "Plate" อะไรบางกว่ากัน
+    t_web = props['t1'] / 10 # mm -> cm
+    t_plate = plate_t / 10   # mm -> cm
+    t_min = min(t_web, t_plate) # ใช้ตัวที่บางที่สุดคำนวณ (Critical)
+
+    # Bearing Formula: Rn = 2.4 * d * t * Fu (Standard AISC)
+    # สมมติ Fu เหล็ก = 4000 ksc (SS400/A36)
+    Fu_steel = 4000 
+    
+    if method == "ASD":
+        omega_br = 2.0
+        Rn_bearing = (2.4 * d_b * t_min * Fu_steel) / omega_br
+    else:
+        phi_br = 0.75
+        Rn_bearing = phi_br * (2.4 * d_b * t_min * Fu_steel)
+
+    # 4. Total Capacity
+    capacity_per_bolt = min(Rn_shear_bolt, Rn_bearing)
+    total_conn_capacity = capacity_per_bolt * bolt_rows
+
+    ratio_conn = V_u / total_conn_capacity
+
+    # --- Result Display ---
+    with col_conn2:
+        st.markdown("**📋 Analysis Result**")
         
-        # Recommendation Logic
-        if "Deflection" in fail_causes and len(fail_causes) == 1:
-             st.warning("💡 **คำแนะนำ:** ปัญหาเกิดจากการแอ่นตัวเพียงอย่างเดียว ลองพิจารณาลดระยะ Span เล็กน้อย หรือเปลี่ยนเกณฑ์ Deflection Limit")
-        elif "Moment" in fail_causes:
-             st.warning("💡 **คำแนะนำ:** รับโมเมนต์ดัดไม่ไหว จำเป็นต้องเพิ่มขนาดหน้าตัด หรือลดระยะ Span ลง")
+        # Status Card
+        if ratio_conn <= 1.0:
+            st.success(f"✅ **PASS** (Ratio: {ratio_conn:.2f})")
+        else:
+            st.error(f"❌ **FAIL** (Ratio: {ratio_conn:.2f})")
+            st.caption("👉 ลองเพิ่มจำนวนน็อต หรือ ขนาดน็อต")
+
+        st.markdown("---")
+        st.markdown(f"**Reaction Force ($V_u$):** `{V_u:,.0f} kg`")
+        
+        col_res_a, col_res_b = st.columns(2)
+        with col_res_a:
+            st.caption("🔩 Bolt Shear Cap.")
+            st.markdown(f"**{Rn_shear_bolt:,.0f}** kg/bolt")
+        with col_res_b:
+            st.caption(f"🛡️ Bearing Cap. (t={t_min*10:.1f}mm)")
+            st.markdown(f"**{Rn_bearing:,.0f}** kg/bolt")
+            
+        st.markdown(f"**Total Capacity ({bolt_rows} bolts):** `{total_conn_capacity:,.0f} kg`")
+
+    # --- Visual Summary (Timeline Style) ---
+    st.markdown("---")
+    st.caption("💡 Note: Bearing Capacity คำนวณจากความหนาที่น้อยที่สุดระหว่าง Web คาน กับ Plate")
+    
+    # Simple Text Visualization
+    check_web = "⚠️ Web บางกว่า Plate" if t_web < t_plate else "✅ Web หนาพอ"
+    st.info(f"""
+    **🔍 Geometry Check:**
+    * Beam Web: {t_web*10:.1f} mm ({check_web})
+    * Connection Plate: {t_plate*10:.1f} mm
+    * Bolt: {bolt_size} (Grade: {bolt_grade.split()[0]}) x {bolt_rows} ตัว
+    """)
