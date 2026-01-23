@@ -8,7 +8,7 @@ from calculator import core_calculation
 # ตรวจสอบชื่อไฟล์ให้ตรงกับที่คุณบันทึกไว้ (เช่น tab4_details.py หรือ tab4_summary.py)
 from tab1_details import render_tab1
 from tab3_capacity import render_tab3
-from tab4_details import render_tab4  # ผมใช้ชื่อ tab4_details ตามโค้ดล่าสุดที่ให้ไป
+from tab4_summary import render_tab4 # ผมใช้ชื่อ tab4_details ตามโค้ดล่าสุดที่ให้ไป
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
