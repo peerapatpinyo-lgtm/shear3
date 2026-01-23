@@ -9,17 +9,17 @@ def render_tab1(c, props, method, Fy, section):
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
     
     # === [NEW] DATA SOURCE TRACING ===
-    with st.expander("ℹ️ Data Sources & Input Parameters (ที่มาของข้อมูล)", expanded=False):
+    with st.expander("ℹ️ Data Sources & Input Parameters", expanded=False):
         ds_c1, ds_c2 = st.columns(2)
         with ds_c1:
-            st.markdown("**🔵 User Inputs (ค่าที่คุณกำหนด):**")
+            st.markdown("**🔵 User Inputs:**")
             st.code(f"Design Method : {method}\n"
                     f"Yield Strength: {Fy} ksc\n"
                     f"Modulus (E)   : {c['E_ksc']/10197.162:.0f} GPa\n"
                     f"Span Length   : {c['L_cm']/100:.2f} m\n"
                     f"Deflect Limit : L/{c.get('def_limit', 360)}")
         with ds_c2:
-            st.markdown("**🗂️ Database Constants (ค่าจากฐานข้อมูล):**")
+            st.markdown("**🗂️ Database Constants:**")
             st.caption(f"Retrieved from `database.SYS_H_BEAMS` key: `{section}`")
             st.code(f"Depth (D) : {props['D']} mm\n"
                     f"Web (tw)  : {props['tw']} mm\n"
@@ -123,7 +123,7 @@ def render_tab1(c, props, method, Fy, section):
     # === 4. DEFLECTION ===
     st.subheader("4. Deflection Control")
     
-    # [UPDATED Logic] ดึงค่า Limit ที่เลือกมาแสดง
+    # [UPDATED Logic] Fetch selected Limit
     limit_val = c.get('def_limit', 360) 
     
     st.write(f"Allowable Deflection Limit (**L/{limit_val}**):")
@@ -175,7 +175,7 @@ def render_tab1(c, props, method, Fy, section):
             st.latex(r"L = \frac{4 M_{full}}{V_{design}}")
         with c2:
             st.markdown("**Substitution:**")
-            # แก้มาใช้ M_des_full เพื่อให้ตัวเลขคงที่ตรงกับตาราง
+            # Using M_des_full to ensure consistency with the table
             st.latex(rf"L = \frac{{4 \times {c['M_des_full']:,.0f}}}{{{c['V_des']:,.0f}}} = {c['L_vm']*100:,.1f} \text{{ cm}}")
             st.success(f"= {c['L_vm']:.2f} m")
 
@@ -187,12 +187,12 @@ def render_tab1(c, props, method, Fy, section):
         with c3:
             st.markdown("**Setup Equation:**")
             st.write(f"Equating Moment ($w_m$) and Deflection ($w_d$) at $L/{limit_val}$:")
-            # แก้มาใช้ M_full ในสูตร
+            # Using M_full in formula
             st.latex(rf"L = \frac{{384 E I}}{{40 \times M_{{full}} \times {limit_val}}}")
         
         with c4:
             st.markdown("**Substitution:**")
-            # แก้มาใช้ M_des_full เพื่อให้ตัวเลขคงที่ตรงกับตาราง
+            # Using M_des_full to ensure consistency with the table
             denom_val = 40 * c['M_des_full'] * limit_val
             st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{{denom_val:,.0f}}}")
             st.latex(rf"L = {c['L_md']*100:,.1f} \text{{ cm}}")
