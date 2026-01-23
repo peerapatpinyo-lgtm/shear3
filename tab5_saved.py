@@ -27,23 +27,19 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         L_md = c['L_md']  # Moment Limit / Deflect Start
         
         # 1.3 Load Scenarios
-        # Max Load at Shear Limit (Strength Based)
         if L_vm > 0:
-            w_max_shear_limit = (2 * c['V_des'] / (L_vm * 100)) * 100 # kg/m
+            w_max_shear_limit = (2 * c['V_des'] / (L_vm * 100)) * 100 
         else:
             w_max_shear_limit = 0
             
-        # 75% Load Scenario
         w_75 = 0.75 * w_max_shear_limit
         
-        # Span at 75% Load (Moment Based)
         if w_75 > 0:
-            L_75 = np.sqrt((8 * c['M_des']) / (w_75 / 100)) / 100 # m
+            L_75 = np.sqrt((8 * c['M_des']) / (w_75 / 100)) / 100 
         else:
             L_75 = 0
 
-        # 1.4 Auto-Scaling for Graph
-        # Ensure Green Zone covers the L_75 point
+        # 1.4 Auto-Scaling
         max_dist = max(L_md, L_75)
         visual_end_point = max(max_dist * 1.15, L_md + 1.0) 
         L_deflect_width = max(0, visual_end_point - L_md)
@@ -52,14 +48,11 @@ def render_tab5(method, Fy, E_gpa, def_limit):
             "Section": section_name,
             "Weight": props['W'],
             "Ix": props['Ix'],
-            # Graph
             "L_shear": L_vm,
             "L_moment_width": max(0, L_md - L_vm),
             "L_deflect_width": L_deflect_width,
-            # Refs
             "Ref_Start_Moment": L_vm,
             "Ref_Start_Deflect": L_md,
-            # Scenario
             "L_75": L_75,
             "Max_Load": w_max_shear_limit,
             "Load_75": w_75
@@ -90,13 +83,14 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         customdata=df['Ref_Start_Deflect']
     ))
 
-    # Layer 3: Deflection (Green)
+    # Layer 3: Deflection (Green) - FIXED LINE IS HERE
     fig.add_trace(go.Bar(
         y=df['Section'], x=df['L_deflect_width'],
         name='Deflection Control', orientation='h',
         marker=dict(color='#5cb85c', opacity=0.4, line=dict(width=0)),
         base=df['Ref_Start_Deflect'],
-        hovertemplate="🟢 <b>Deflection Zone</b>: > %{base:.2f} m<br><i>(Check L/%s)</i><extra></extra>" % def_limit
+        # ใช้ f-string และ escape ปีกกา Plotly เป็น {{...}}
+        hovertemplate=f"🟢 <b>Deflection Zone</b>: > %{{base:.2f}} m<br><i>(Check L/{def_limit})</i><extra></extra>"
     ))
 
     # Layer 4: 75% Point
@@ -147,24 +141,24 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     csv = df_display.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download Data CSV", csv, "SYS_Full_Data.csv", "text/csv")
 
-    # --- 4. Methodology Explanation (NEW!) ---
+    # --- 4. Methodology ---
     st.markdown("---")
     with st.expander("🧮 ที่มาการคำนวณ Span @ 75% (Calculation Methodology)", expanded=True):
-        st.markdown("""
+        st.markdown(r"""
         ค่า **Span @ 75%** คำนวณตามหลักการ **Strength Limit State** เพื่อหาระยะพาดที่เหมาะสมเมื่อลดน้ำหนักบรรทุกลง:
         
         **1. หาค่า Max Load ($w_{max}$):**
         คำนวณจากจุดที่รับแรงเฉือนได้สูงสุด (Shear Capacity Limit) ซึ่งถือเป็นจุดที่หน้าตัดทำงานได้เต็มประสิทธิภาพที่สุด
-        $$ w_{max} = \\frac{2 \\times V_{design}}{L_{shear}} $$
+        $$ w_{max} = \frac{2 \times V_{design}}{L_{shear}} $$
         
         **2. ลดน้ำหนักลงเหลือ 75%:**
         จำลองสถานการณ์ใช้งานจริง โดยลดน้ำหนักบรรทุกลงจากจุดวิกฤต
-        $$ w_{75\\%} = 0.75 \\times w_{max} $$
+        $$ w_{75\%} = 0.75 \times w_{max} $$
         
         **3. คำนวณระยะพาดใหม่ ($L_{75}$):**
         คำนวณหาว่าเมื่อ Load เบาลง คานจะยื่นยาวออกไปได้ไกลแค่ไหน จนกว่าจะชนขีดจำกัดของโมเมนต์ดัด ($M_{design}$)
         
-        $$ M_{design} = \\frac{w L^2}{8} \\quad \\Rightarrow \\quad L_{75} = \\sqrt{\\frac{8 \\times M_{design}}{w_{75\\%}}} $$
+        $$ M_{design} = \frac{w L^2}{8} \quad \Rightarrow \quad L_{75} = \sqrt{\frac{8 \times M_{design}}{w_{75\%}}} $$
         
         ---
         > **⚠️ ข้อควรระวัง (Note):** > การคำนวณนี้คิดจากความแข็งแรง (Strength) เป็นหลัก หากจุด **Span @ 75%** ในกราฟตกอยู่ใน **โซนสีเขียว (Deflection Zone)** > แสดงว่าคานรับน้ำหนักไหว แต่จะเกิดการแอ่นตัวเกินพิกัด (ตกท้องช้าง) จำเป็นต้องตรวจสอบระยะแอ่นตัวหน้างานอีกครั้ง
