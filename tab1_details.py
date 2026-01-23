@@ -3,13 +3,12 @@ import streamlit as st
 def render_tab1(c, props, method, Fy, section):
     """
     Function to render Tab 1: Detailed Calculation Sheet (English Version)
-    With Data Source Tracing
+    With Lateral-Torsional Buckling (LTB) Analysis
     """
     
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
     
     # === [NEW] DATA SOURCE TRACING ===
-    # แสดงกล่องสรุปว่าค่าไหนมาจากไหน
     with st.expander("ℹ️ Data Sources & Input Parameters (ที่มาของข้อมูล)", expanded=False):
         ds_c1, ds_c2 = st.columns(2)
         with ds_c1:
@@ -29,15 +28,20 @@ def render_tab1(c, props, method, Fy, section):
     st.markdown("---")
 
     # === 1. PROPERTIES ===
-    # เพิ่ม Label บอกชัดเจนว่าดึงมาจาก Database
     st.markdown("#### 1. Geometric Properties")
     st.caption(f"📍 Values retrieved from standard section table for **{section}**")
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Depth (D)", f"{props['D']} mm", delta="Database", delta_color="off")
-    c2.metric("Web (tw)", f"{props['tw']} mm", delta="Database", delta_color="off")
-    c3.metric("Web Area (Aw)", f"{c['Aw']:.2f} cm²", delta="Calculated", delta_color="off") # Aw คำนวณใน code
-    c4.metric("Modulus (Zx)", f"{props['Zx']:,} cm³", delta="Database", delta_color="off")
+    c2.metric("Width (B)", f"{props.get('B', '-')} mm", delta="Database", delta_color="off")
+    c3.metric("Flange (tf)", f"{props.get('tf', '-')} mm", delta="Database", delta_color="off")
+    c4.metric("Web (tw)", f"{props['tw']} mm", delta="Database", delta_color="off")
+    
+    c1b, c2b, c3b, c4b = st.columns(4)
+    c1b.metric("Inertia (Ix)", f"{props['Ix']:,} cm4")
+    c2b.metric("Plastic Mod (Zx)", f"{props['Zx']:,} cm3")
+    c3b.metric("Elastic Mod (Sx)", f"{c['Sx']:.1f} cm3", delta="Calculated", delta_color="off")
+    c4b.metric("Unbraced Length", f"{c['Lb']:.2f} m", help="Assumed equal to Span Length")
     
     st.markdown("---")
 
@@ -67,19 +71,35 @@ def render_tab1(c, props, method, Fy, section):
     st.latex(rf"w_s = \frac{{2 \times {c['V_des']:,.0f}}}{{{c['L_cm']:.0f}}} \times 100 = \mathbf{{{c['ws']:,.0f}}} \text{{ kg/m}}")
     st.markdown("---")
 
-    # === 3. MOMENT ===
-    st.subheader("3. Moment Capacity Control")
+    # === 3. MOMENT (WITH LTB) ===
+    st.subheader("3. Moment Capacity Control (Include LTB)")
+    
+    # 3.1 Check LTB Zone
+    st.markdown("**Step 3.1: Check Lateral-Torsional Buckling (LTB) Zone**")
+    st.write("Determine the unbraced length ($L_b$) zone:")
+    
+    lz1, lz2, lz3 = st.columns(3)
+    lz1.metric("Limit Lp (Yield)", f"{c['Lp']:.2f} m", help="Zone 1 Limit")
+    lz2.metric("Limit Lr (Elastic)", f"{c['Lr']:.2f} m", help="Zone 2 Limit")
+    lz3.info(f"Current State: **{c['Zone']}**")
+    
+    if c['Lb'] <= c['Lp']:
+        st.success(f"✅ Full Plastic Moment Capacity ($L_b \le L_p$)")
+    elif c['Lb'] <= c['Lr']:
+        st.warning(f"⚠️ Inelastic Buckling Zone ($L_p < L_b \le L_r$). Capacity Reduced.")
+    else:
+        st.error(f"🛑 Elastic Buckling Zone ($L_b > L_r$). Capacity Significantly Reduced.")
+    
     col_m1, col_m2 = st.columns([1, 1])
     
     with col_m1:
-        st.markdown("**Step 3.1: Nominal Moment Strength ($M_n$)**")
-        st.latex(r"M_n = F_y \times Z_x")
-        st.write(f"- $F_y$ (Input) = {Fy} ksc")
-        st.write(f"- $Z_x$ (Database) = {props['Zx']:,} cm³")
-        st.latex(rf"\therefore M_n = {Fy} \times {props['Zx']} = \mathbf{{{c['Mn']:,.0f}}} \text{{ kg-cm}}")
+        st.markdown("**Step 3.2: Nominal Moment Strength ($M_n$)**")
+        st.write(f"- $M_p$ (Plastic Limit) = {c['Mp']:,.0f} kg-cm")
+        st.write(f"- $M_n$ (Calculated with LTB) = {c['Mn']:,.0f} kg-cm")
+        st.latex(rf"\therefore M_n = \mathbf{{{c['Mn']:,.0f}}} \text{{ kg-cm}}")
         
     with col_m2:
-        st.markdown("**Step 3.2: Design Moment Strength ($M_{design}$)**")
+        st.markdown("**Step 3.3: Design Moment Strength ($M_{design}$)**")
         st.latex(c['txt_m_method'])
         if method == "ASD":
              st.write(f"Using Safety Factor $\Omega_b = {c['omega_b']:.2f}$ (AISC ASD)")
@@ -89,7 +109,7 @@ def render_tab1(c, props, method, Fy, section):
              st.latex(rf"M_{{design}} = {c['phi_b']:.2f} \times {c['Mn']:,.0f}")
         st.latex(rf"\therefore M_{{design}} = \mathbf{{{c['M_des']:,.0f}}} \text{{ kg-cm}}")
 
-    st.markdown("**Step 3.3: Safe Uniform Load ($w_m$)**")
+    st.markdown("**Step 3.4: Safe Uniform Load ($w_m$)**")
     st.latex(rf"w_m = \frac{{8 \times {c['M_des']:,.0f}}}{{{c['L_cm']:.0f}^2}} \times 100 = \mathbf{{{c['wm']:,.0f}}} \text{{ kg/m}}")
     st.markdown("---")
 
@@ -117,7 +137,7 @@ def render_tab1(c, props, method, Fy, section):
     res_col1, res_col2 = st.columns(2)
     with res_col1:
         if c['ws'] == final_w: ctrl = "Shear Control"
-        elif c['wm'] == final_w: ctrl = "Moment Control"
+        elif c['wm'] == final_w: ctrl = f"Moment Control ({c['Zone']})"
         else: ctrl = "Deflection Control"
         
         st.info(f"**Governing Case:** {ctrl}")
