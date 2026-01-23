@@ -8,7 +8,8 @@ from calculator import core_calculation
 from tab1_details import render_tab1
 from tab3_capacity import render_tab3
 from tab4_summary import render_tab4
-from tab5_saved import render_tab5  # <--- [NEW] เพิ่มบรรทัดนี้
+from tab5_saved import render_tab5   # Timeline Analysis
+from tab6_design import render_tab6  # [NEW] Design Check
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -39,20 +40,21 @@ c = core_calculation(L_input, Fy, E_gpa, props, method, def_val)
 final_w = min(c['ws'], c['wm'], c['wd'])
 
 # --- Display Tabs ---
-# [UPDATE] เพิ่ม Tab 5: Saved Sections
-t1, t2, t3, t4, t5 = st.tabs([
+# [UPDATE] เพิ่ม Tab 6
+t1, t2, t3, t4, t5, t6 = st.tabs([
     "📝 Detail Report", 
     "📊 Behavior Graph", 
     "📋 Capacity Table",
     "📚 Master Catalog",
-    "📑 Saved Sections"  # <--- [NEW] ชื่อ Tab ใหม่
+    "📊 Timeline Analysis", # เปลี่ยนชื่อให้ตรงกับเนื้อหา (กราฟแท่ง Timeline)
+    "🛠️ Design Check"      # [NEW] Tab 6
 ])
 
 with t1:
     render_tab1(c, props, method, Fy, section)
 
 with t2:
-    # (โค้ดกราฟเดิมของคุณ...)
+    # --- Graph Logic for Tab 2 ---
     st.subheader(f"📈 Capacity Envelope Analysis: {section}")
     st.caption(f"Load Capacity Envelope (Deflection Limit: **L/{def_val}**)")
 
@@ -107,17 +109,16 @@ with t2:
         name='Your Design'
     ))
 
+    # Add Zone Annotations
     fig.add_vrect(x0=0, x1=c['L_vm'], fillcolor="#d9534f", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=c['L_vm']/2, y=y_lim*0.9, text="SHEAR", showarrow=False, 
-                       font=dict(color="#d9534f", weight="bold"))
+    if c['L_vm'] > 0:
+        fig.add_annotation(x=c['L_vm']/2, y=y_lim*0.9, text="SHEAR", showarrow=False, font=dict(color="#d9534f", weight="bold"))
     
     fig.add_vrect(x0=c['L_vm'], x1=c['L_md'], fillcolor="#f0ad4e", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, 
-                       font=dict(color="#f0ad4e", weight="bold"))
+    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, font=dict(color="#f0ad4e", weight="bold"))
     
     fig.add_vrect(x0=c['L_md'], x1=L_max, fillcolor="#5cb85c", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim*0.9, text="DEFLECTION", showarrow=False, 
-                       font=dict(color="#5cb85c", weight="bold"))
+    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim*0.9, text="DEFLECTION", showarrow=False, font=dict(color="#5cb85c", weight="bold"))
 
     fig.update_layout(
         title=dict(text=f"Structural Capacity Envelope: {section}", font=dict(size=20)),
@@ -137,6 +138,9 @@ with t3:
 with t4:
     render_tab4(method, Fy, E_gpa, def_val)
 
-# [NEW] เรียกใช้ Tab 5
 with t5:
     render_tab5(method, Fy, E_gpa, def_val)
+
+# [NEW] Render Tab 6
+with t6:
+    render_tab6(method, Fy, E_gpa, def_val)
