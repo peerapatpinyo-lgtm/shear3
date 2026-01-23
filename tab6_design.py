@@ -1,15 +1,15 @@
-# tab6_design.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 from database import SYS_H_BEAMS
 from drawer_3d import create_connection_figure
-import calculator_tab as calc  # <--- 1. IMPORT CALCULATOR
+import calculator_tab as calc 
 
 # ==========================================
-# 📐 HELPER
+# 📐 HELPER FUNCTIONS
 # ==========================================
 def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
+    """คำนวณจำนวนแถวน็อตสูงสุดที่เป็นไปได้"""
     workable_depth = beam_d - (2 * k_dist) 
     available_h = beam_d - (2 * beam_tf) - margin_top - margin_bot
     if available_h <= (2 * lev): return 0
@@ -17,13 +17,13 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
     return max(0, max_n)
 
 # ==========================================
-# 🏗️ MAIN UI
+# 🏗️ MAIN UI RENDERER
 # ==========================================
 def render_tab6(method, Fy, E_gpa, def_limit):
-    st.markdown("### 🏗️ Shear Plate Design (Professional)")
+    st.markdown("### 🏗️ Shear Plate Design (Detailed Report)")
     col_input, col_viz = st.columns([1.3, 2.5])
 
-    # --- 1. INPUT ---
+    # --- 1. INPUT SECTION ---
     with col_input:
         with st.expander("1️⃣ Host Beam & Load", expanded=True):
             sec_name = st.selectbox("Section", list(SYS_H_BEAMS.keys()))
@@ -56,7 +56,6 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             # Row Logic
             max_rows = get_max_rows(bm_D, bm_Tf, k_des, 10, 10, pitch, lev)
             n_rows = st.number_input("Rows", min_value=2, max_value=max(2, max_rows), value=max(2, min(3, max_rows)))
-            if max_rows < 2: st.warning("⚠️ Beam too small!")
             
             st.markdown("---")
             setback = st.slider("Setback", 0, 25, 12)
@@ -79,7 +78,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             pl_h = (2 * lev) + ((n_rows - 1) * pitch)
 
     # --- 2. CALCULATION LINK ---
-    # รวบรวมข้อมูลส่งเข้า calculator_tab.py
+    # Prepare inputs for calculator
     calc_inputs = {
         'load': Vu_load,
         'beam_tw': bm_Tw, 'beam_mat': mat_grade,
@@ -90,25 +89,26 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         'weld_sz': weld_sz
     }
     
-    # สั่งคำนวณทันที
+    # Run Calculation
     results = calc.calculate_shear_tab(calc_inputs)
     summary = results['summary']
 
-    # --- 3. VIZ & OUTPUT ---
+    # --- 3. DISPLAY OUTPUT ---
     with col_viz:
-        # Header Status Bar
-        status_color = "green" if summary['status'] == "✅ PASS" else "red"
+        # Status Box
+        status_color = "#2ecc71" if summary['status'] == "PASS" else "#e74c3c"
         st.markdown(f"""
-        <div style="background-color: rgba(0,0,0,0.05); padding: 10px; border-radius: 5px; border-left: 5px solid {status_color};">
-            <h3 style="margin:0; color:{status_color};">{summary['status']} (Ratio: {summary['utilization']:.2f})</h3>
-            <small>Governing: {summary['gov_mode']} ({summary['gov_capacity']:.0f} kg)</small>
+        <div style="background-color: {status_color}; padding: 15px; border-radius: 8px; color: white; margin-bottom: 10px;">
+            <h3 style="margin:0;">{summary['status']} (Ratio: {summary['utilization']:.2f})</h3>
+            <p style="margin:0;">Load: {Vu_load:,.0f} kg | Capacity: {summary['gov_capacity']:,.0f} kg</p>
+            <small>Governing Mode: {summary['gov_mode']}</small>
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2 = st.tabs(["🧊 3D Model", "📋 Engineering Check"])
+        tab1, tab2 = st.tabs(["🧊 3D Model", "📝 Detailed Calc. Sheet"])
         
         with tab1:
-            # Pack Data for Drawer
+            # Prepare Data for Drawer
             beam_dims = {'H': bm_D, 'B': beam['B']*d_factor, 'Tw': bm_Tw, 'Tf': bm_Tf}
             bolt_dims = {'dia': d_b, 'n_rows': n_rows, 'pitch': pitch, 'lev': lev, 'leh_beam': leh}
             plate_dims = {'t': plate_t, 'w': pl_w, 'h': pl_h, 'weld_sz': weld_sz}
@@ -121,25 +121,37 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                 st.error(f"❌ Error Plotting: {e}")
 
         with tab2:
-            st.markdown("#### Detail Calculation (LRFD)")
+            st.markdown("#### 📐 Engineering Calculation Report (AISC LRFD)")
+            st.markdown("---")
             
-            # วนลูปแสดงผลลัพธ์แต่ละโหมด (Bolt, Bearing, Yield, Rupture, Weld)
+            # Loop through modes
             modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'weld']
             
             for mode in modes:
                 data = results.get(mode)
                 if data:
-                    # Color logic for progress bar
-                    ratio = data['ratio']
-                    color = "red" if ratio > 1.0 else "green"
-                    
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        st.markdown(f"**{data['title']}**")
-                        st.caption(f"{data['desc']}")
-                    with c2:
-                        st.markdown(f"<span style='color:{color}; font-weight:bold'>{ratio:.2f}</span>", unsafe_allow_html=True)
-                        st.progress(min(ratio, 1.0))
-                    st.divider()
-            
-            st.info(f"**Plate Size:** {pl_w} x {pl_h} x {plate_t} mm | **Est. Weight:** {(pl_w*pl_h*plate_t*7.85e-6):.2f} kg")
+                    # Header
+                    icon = "✅" if data['ratio'] <= 1.0 else "❌"
+                    # ใช้ Expander แสดงผล เพื่อความสะอาดตา
+                    with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
+                        
+                        # 1. แสดงสูตร LaTeX
+                        if 'latex_eq' in data:
+                            st.latex(data['latex_eq'])
+                        
+                        # 2. แสดงขั้นตอนการแทนค่า (แก้จุดที่ error ตรงนี้)
+                        st.markdown("**Calculation Steps:**")
+                        if 'calcs' in data:
+                            for step in data['calcs']:
+                                st.markdown(f"- {step}")
+                        elif 'desc' in data: # Fallback เผื่อกรณีไฟล์ไม่ตรงกัน
+                            st.markdown(f"- {data['desc']}")
+                        
+                        # 3. สรุปผล
+                        res_color = "green" if data['ratio'] <= 1.0 else "red"
+                        sign = '≥' if data['ratio'] <= 1.0 else '<'
+                        st.markdown(f"""
+                        <div style="background-color: rgba(0,0,0,0.05); padding: 8px; border-radius: 4px; border-left: 4px solid {res_color};">
+                            <b>Result:</b> φRn = {data['phi_Rn']:.0f} kg {sign} Vu ({Vu_load:.0f} kg)
+                        </div>
+                        """, unsafe_allow_html=True)
