@@ -3,120 +3,109 @@ import pandas as pd
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
+# [UPDATE] เพิ่มตัวแปร def_limit ในบรรทัดนี้
 def render_tab4(method, Fy, E_gpa, def_limit):
     """
     Tab 4: Master Summary Table
-    วนลูปคำนวณเหล็กทุกหน้าตัด เพื่อแสดงตารางเปรียบเทียบและช่วงพฤติกรรม
-    [Updated] รับค่า def_limit เพื่อให้ตารางอัปเดตตาม Deflection Criteria ที่เลือก
+    แสดงตารางเปรียบเทียบหน้าตัดทั้งหมด โดยอัปเดตตาม Deflection Limit ที่เลือก
     """
     st.markdown(f"### 📋 Master Catalog: Section Comparison ({method})")
-    st.write("ตารางสรุปพฤติกรรมและกำลังรับน้ำหนักของเหล็กทุกหน้าตัด (All Sections Analysis)")
     
-    # แสดง Criteria ปัจจุบัน
-    st.info(f"ℹ️ Current Deflection Limit: **L/{def_limit}**")
-    
-    # --- Control Inputs for Comparison ---
-    with st.expander("⚙️ ตั้งค่าการเปรียบเทียบ (Comparison Settings)", expanded=True):
+    # แสดงค่า Limit ปัจจุบันเพื่อให้ User มั่นใจว่าเปลี่ยนแล้ว
+    st.info(f"ℹ️ Current Criteria: Deflection Limit = **L/{def_limit}**")
+
+    # --- Comparison Settings ---
+    with st.expander("⚙️ Comparison Settings (ตั้งค่าระยะเปรียบเทียบ)", expanded=True):
         col_inp1, col_inp2 = st.columns([1, 2])
         with col_inp1:
-            # ให้ User เลือกระยะที่จะ Compare Capacity
-            compare_L = st.slider("Select Span for Capacity Check (m)", 2.0, 20.0, 6.0, 0.5)
+            compare_L = st.slider("Select Span (m)", 2.0, 20.0, 6.0, 0.5)
         with col_inp2:
-            st.write(f"💡 ตารางจะแสดง Capacity ของเหล็กทุกตัวที่ระยะ **{compare_L} เมตร**")
-            st.caption(f"ภายใต้เงื่อนไข Deflection **L/{def_limit}**")
+            st.caption(f"Comparing capacity of all sections at Span = **{compare_L} m**")
 
     # --- Loop Calculation ---
     data = []
     
-    # วนลูปเหล็กทุกตัวใน Database
-    # เรียงลำดับตามขนาดก่อน (Sort by Height)
+    # Sort sections by size
     sorted_sections = sorted(SYS_H_BEAMS.keys(), key=lambda x: int(x.split('x')[0].split('-')[1]))
     
     for section_name in sorted_sections:
         props = SYS_H_BEAMS[section_name]
         
-        # [IMPORTANT] ส่ง def_limit เข้าไปใน core_calculation
-        
-        # 1. คำนวณเพื่อหา Critical Lengths (ใช้ L=10 ไปก่อน เพราะค่า L_vm, L_md เป็นค่าคงที่ของหน้าตัด)
+        # [IMPORTANT] ส่ง def_limit เข้าไปคำนวณหา Critical Lengths ใหม่
+        # L_md (จุดเปลี่ยน Moment/Deflection) จะเปลี่ยนไปตามค่า def_limit
         c_const = core_calculation(10.0, Fy, E_gpa, props, method, def_limit)
         L_vm = c_const['L_vm']
         L_md = c_const['L_md']
         
-        # 2. คำนวณ Capacity ที่ระยะที่ User เลือก (compare_L)
+        # [IMPORTANT] คำนวณ Capacity ที่ระยะ compare_L โดยใช้ def_limit ใหม่
         c_active = core_calculation(compare_L, Fy, E_gpa, props, method, def_limit)
         
-        # หาค่าที่ Control ที่ระยะ compare_L
+        # หาค่า Control
         cap_val = min(c_active['ws'], c_active['wm'], c_active['wd'])
         
         if cap_val == c_active['ws']: mode = "Shear"
         elif cap_val == c_active['wm']: mode = "Moment"
         else: mode = "Deflection"
         
-        # หักน้ำหนักคาน (Net Load)
         net_load = max(0, cap_val - props['W'])
 
-        # เก็บข้อมูลลง List
         data.append({
             "Section": section_name,
-            "Weight (kg/m)": props['W'],
+            "Weight": props['W'],
+            "L_Shear_End": L_vm,   # เก็บค่าตัวเลขไว้ sort ได้
+            "L_Deflect_Start": L_md, # เก็บค่าตัวเลขไว้ sort ได้
             
-            # Critical Zones (ช่วงระยะ)
-            "L (Shear)": f"0 - {L_vm:.2f} m",
-            "L (Moment)": f"{L_vm:.2f} - {L_md:.2f} m",
-            "L (Deflection)": f"> {L_md:.2f} m",
+            # Display Strings
+            "Shear Zone": f"0 - {L_vm:.2f} m",
+            "Moment Zone": f"{L_vm:.2f} - {L_md:.2f} m",
+            "Deflect Zone": f"> {L_md:.2f} m",
             
-            # Capacity at Selected Span
             f"Cap @ {compare_L}m": int(cap_val),
-            f"Net Load @ {compare_L}m": int(net_load),
-            "Control Mode": mode
+            f"Net @ {compare_L}m": int(net_load),
+            "Mode": mode
         })
 
-    # --- Create DataFrame ---
     df = pd.DataFrame(data)
 
-    # --- Display with Formatting ---
-    
-    # 1. Highlight Control Mode
+    # --- Styling ---
     def highlight_mode(val):
         color = ''
-        if val == 'Shear': color = 'color: #d9534f; font-weight: bold' # Red
-        elif val == 'Moment': color = 'color: #f0ad4e; font-weight: bold' # Orange
-        elif val == 'Deflection': color = 'color: #5cb85c; font-weight: bold' # Green
+        if val == 'Shear': color = 'color: #d9534f; font-weight: bold'
+        elif val == 'Moment': color = 'color: #f0ad4e; font-weight: bold'
+        elif val == 'Deflection': color = 'color: #5cb85c; font-weight: bold'
         return color
 
-    # 2. Setup Column Config (เพื่อใส่ Bar Chart ในตาราง)
     st.dataframe(
-        df.style.map(highlight_mode, subset=['Control Mode']), # ใช้ map แทน applymap สำหรับ pandas รุ่นใหม่
+        df.style.map(highlight_mode, subset=['Mode']),
         use_container_width=True,
         height=600,
         column_config={
-            "Section": st.column_config.TextColumn("Section Name", width="medium"),
-            "Weight (kg/m)": st.column_config.NumberColumn("Weight", format="%.1f"),
+            "Section": st.column_config.TextColumn("Section", width="small"),
+            "Weight": st.column_config.NumberColumn("Wt (kg/m)", format="%.1f"),
             
-            # Critical Lengths
-            "L (Shear)": st.column_config.TextColumn("🔴 Shear Zone", help="ช่วงระยะที่ Shear Control"),
-            "L (Moment)": st.column_config.TextColumn("🟠 Moment Zone", help="ช่วงระยะที่ Moment Control"),
-            "L (Deflection)": st.column_config.TextColumn("🟢 Deflection Zone", help=f"ช่วงระยะที่ Deflection (L/{def_limit}) Control"),
+            # Critical Zones (แสดงผลตามค่า Deflection Limit ใหม่)
+            "Shear Zone": st.column_config.TextColumn("🔴 Shear Zone", width="small"),
+            "Moment Zone": st.column_config.TextColumn("🟠 Moment Zone", width="small"),
+            "Deflect Zone": st.column_config.TextColumn("🟢 Deflect Zone", width="small", help=f"Starts when Deflection > L/{def_limit}"),
             
-            # Capacity (ใส่ Progress Bar ให้เห็นภาพเปรียบเทียบ)
             f"Cap @ {compare_L}m": st.column_config.ProgressColumn(
-                f"Total Capacity (kg/m)",
+                f"Cap (kg/m)",
                 format="%d",
                 min_value=0,
                 max_value=int(df[f"Cap @ {compare_L}m"].max()),
             ),
-            f"Net Load @ {compare_L}m": st.column_config.NumberColumn(
-                "Safe Net Load", format="%d kg/m"
+            f"Net @ {compare_L}m": st.column_config.NumberColumn(
+                "Net Load", format="%d"
             )
         },
         hide_index=True
     )
     
-    # CSV Download Button
+    # Download CSV
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="💾 Download Summary as CSV",
+        label="📥 Download CSV",
         data=csv,
-        file_name=f"SYS_H_Beam_Summary_{method}_L{compare_L}m_Def{def_limit}.csv",
+        file_name=f"Master_Catalog_{method}_L{def_limit}.csv",
         mime='text/csv',
     )
