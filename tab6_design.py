@@ -124,8 +124,10 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         Rn_shear_bolt = phi * (Fnv * A_b)
 
     # 3. Bearing Capacity (At Beam Web & Plate)
-    # เราต้องเช็คว่า รูเจาะที่ "เอวคาน (Web)" หรือ "Plate" อะไรบางกว่ากัน
-    t_web = props['t1'] / 10 # mm -> cm
+    # [FIX] ดึงค่าความหนา Web (รองรับทั้ง key 'tw' และ 't1')
+    raw_tw = props.get('tw', props.get('t1', 6.0)) # ถ้าหาไม่เจอให้ default เป็น 6mm
+    t_web = raw_tw / 10 # mm -> cm
+    
     t_plate = plate_t / 10   # mm -> cm
     t_min = min(t_web, t_plate) # ใช้ตัวที่บางที่สุดคำนวณ (Critical)
 
