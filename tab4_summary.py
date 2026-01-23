@@ -1,9 +1,9 @@
+# ไฟล์: tab4_summary.py
 import streamlit as st
 import pandas as pd
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
-# [UPDATE] รับค่า def_limit เข้ามาด้วย
 def render_tab4(method, Fy, E_gpa, def_limit):
     """
     Tab 4: Master Summary Table
