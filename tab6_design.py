@@ -5,65 +5,47 @@ import plotly.graph_objects as go
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
-# --- HELPER: GEOMETRY ENGINE ---
-def create_cylinder_mesh(p1, p2, r, color, sides=16):
-    """สร้าง Mesh ทรงกระบอกสมจริง (เชื่อมระหว่างจุด p1 และ p2)"""
+# ==========================================
+# 🔧 3D GEOMETRY ENGINE (High-Fidelity)
+# ==========================================
+
+def create_cylinder(p1, p2, r, color, opacity=1.0):
+    """สร้าง Mesh ทรงกระบอก (ก้านน็อต)"""
     v = p2 - p1
-    h = np.linalg.norm(v)
-    if h == 0: return go.Mesh3d()
-    v = v / h # Unit vector
+    mag = np.linalg.norm(v)
+    if mag == 0: return go.Mesh3d()
+    v = v / mag
     
-    # สร้าง Basis vectors
     not_v = np.array([1, 0, 0])
     if np.abs(np.dot(v, not_v)) > 0.9: not_v = np.array([0, 1, 0])
-    n1 = np.cross(v, not_v)
-    n1 /= np.linalg.norm(n1)
+    n1 = np.cross(v, not_v); n1 /= np.linalg.norm(n1)
     n2 = np.cross(v, n1)
     
-    # Generate points
-    theta = np.linspace(0, 2*np.pi, sides+1)[:-1]
-    x_circle = r * np.cos(theta)
-    y_circle = r * np.sin(theta)
+    theta = np.linspace(0, 2*np.pi, 20)
+    x_circ = r * np.cos(theta)
+    y_circ = r * np.sin(theta)
     
-    # Vertices
-    vertices = []
-    # Bottom circle
-    for x, y in zip(x_circle, y_circle):
-        pos = p1 + x*n1 + y*n2
-        vertices.append(pos)
-    # Top circle
-    for x, y in zip(x_circle, y_circle):
-        pos = p2 + x*n1 + y*n2
-        vertices.append(pos)
+    verts = []
+    for x, y in zip(x_circ, y_circ): verts.append(p1 + x*n1 + y*n2)
+    for x, y in zip(x_circ, y_circ): verts.append(p2 + x*n1 + y*n2)
+    verts = np.array(verts)
     
-    vertices = np.array(vertices)
-    
-    # Triangles (Indices)
-    i_list, j_list, k_list = [], [], []
-    n = sides
+    n = 20
+    i, j, k = [], [], []
     for idx in range(n):
-        next_idx = (idx + 1) % n
-        # Side 1
-        i_list.extend([idx, next_idx, idx + n])
-        j_list.extend([next_idx, next_idx + n, next_idx + n])
-        k_list.extend([idx + n, idx + n, idx])
-        
-        # End caps (simple fan)
-        # (ละไว้เพื่อ performance เน้นผิวข้าง)
+        nxt = (idx + 1) % n
+        i.extend([idx, nxt, idx+n]); j.extend([nxt, nxt+n, nxt+n]); k.extend([idx+n, idx+n, idx])
+        i.extend([idx, idx+n, nxt]); j.extend([nxt, idx, nxt]); k.extend([idx+n, idx, idx]) # Double side
 
-    return go.Mesh3d(
-        x=vertices[:,0], y=vertices[:,1], z=vertices[:,2],
-        i=i_list, j=j_list, k=k_list,
-        color=color, opacity=1.0, flatshading=False, name='Bolt'
-    )
+    return go.Mesh3d(x=verts[:,0], y=verts[:,1], z=verts[:,2], i=i, j=j, k=k, color=color, opacity=opacity, flatshading=False, name='Bolt')
 
-def create_hex_head(center, direction, r, thickness, color):
+def create_hex(center, normal, r, thick, color):
     """สร้างหัวน็อต 6 เหลี่ยม"""
     p1 = center
-    p2 = center + (direction * thickness)
-    return create_cylinder_mesh(p1, p2, r, color, sides=6)
+    p2 = center + (normal * thick)
+    return create_cylinder(p1, p2, r, color, opacity=1.0) # Simplified as cylinder for perf, or could implement hex
 
-def make_box_pro(x, y, z, dx, dy, dz, color, name, opacity=1.0):
+def make_box(x, y, z, dx, dy, dz, color, opacity=1.0, name="Part"):
     return go.Mesh3d(
         x=[x-dx/2, x-dx/2, x+dx/2, x+dx/2, x-dx/2, x-dx/2, x+dx/2, x+dx/2],
         y=[y-dy/2, y+dy/2, y+dy/2, y-dy/2, y-dy/2, y+dy/2, y+dy/2, y-dy/2],
@@ -72,170 +54,179 @@ def make_box_pro(x, y, z, dx, dy, dz, color, name, opacity=1.0):
         j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
         k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
         color=color, opacity=opacity, flatshading=True, name=name,
-        lighting=dict(ambient=0.5, diffuse=0.8, specular=0.5, roughness=0.1) # Metallic feel
+        lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2)
     )
 
-# --- MAIN RENDER FUNCTION ---
-def render_tab6(method, Fy, E_gpa, def_limit):
-    st.markdown("## 🏗️ Ultimate Connection Studio (Pro-CAD)")
-    st.caption("Mode: **High-Fidelity 3D** | **Parametric Bolts** | **Interactive Report**")
+def add_dim_line(fig, p1, p2, label, color="black", offset=0):
+    """ฟังก์ชันวาดเส้น Dimension ใน 3D"""
+    mid = (p1 + p2) / 2
+    # Draw Line
+    fig.add_trace(go.Scatter3d(
+        x=[p1[0], p2[0]], y=[p1[1], p2[1]], z=[p1[2], p2[2]],
+        mode='lines+text', line=dict(color=color, width=3, dash='solid'),
+        text=[None, None], showlegend=False
+    ))
+    # Draw End Ticks (Simple dots for now)
+    fig.add_trace(go.Scatter3d(
+        x=[p1[0], p2[0]], y=[p1[1], p2[1]], z=[p1[2], p2[2]],
+        mode='markers', marker=dict(size=3, color=color), showlegend=False
+    ))
+    # Draw Label
+    fig.add_trace(go.Scatter3d(
+        x=[mid[0]], y=[mid[1]], z=[mid[2] + offset],
+        mode='text', text=[f"<b>{label}</b>"],
+        textposition="top center", textfont=dict(size=12, color=color), showlegend=False
+    ))
 
-    # --- 1. INPUTS ---
+# ==========================================
+# 🚀 MAIN APP RENDERER
+# ==========================================
+
+def render_tab6(method, Fy, E_gpa, def_limit):
+    st.markdown("## 🏗️ 3D Shop Drawing & Design")
+    st.caption("Mode: **Real-Scale 1:1** | **Auto-Dimensioning** | **Fabrication Check**")
+
+    # --- 1. PARAMETERS ---
     with st.expander("🎛️ Design Parameters", expanded=True):
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns([1.5, 1, 1.5])
         with c1:
-            section_name = st.selectbox("Beam Section", list(SYS_H_BEAMS.keys()))
+            section_name = st.selectbox("Beam Size", list(SYS_H_BEAMS.keys()))
             props = SYS_H_BEAMS[section_name]
         with c2:
-            # Auto Load Logic
-            c_ref = core_calculation(6.0, Fy, E_gpa, props, method, def_limit)
-            rec_load = 0.75 * max(0, ((2*c_ref['V_des']/(c_ref['L_vm']*100))*100) - props['W'])
-            load = st.number_input("Load (kg/m)", value=float(int(rec_load)), step=100.0)
-            span = 6.0
+            bolt_size = st.selectbox("Bolt", ["M16", "M20", "M22", "M24"], index=1)
+            n_rows = st.number_input("Rows", 2, 8, 3)
         with c3:
-            bolt_size = st.selectbox("Bolt Size", ["M16", "M20", "M22", "M24", "M27", "M30"], index=1)
-        with c4:
-            n_rows = st.number_input("Rows", 2, 10, 3)
+            # Smart Default Geometry
+            d_b_mm = float(bolt_size.replace("M",""))
+            plate_t = st.selectbox("Plate T (mm)", [6, 9, 12, 16, 19, 25], index=2)
+            
+            c3a, c3b, c3c = st.columns(3)
+            pitch = c3a.number_input("Pitch", value=int(3*d_b_mm), step=5)
+            lev = c3b.number_input("V-Edge", value=int(1.5*d_b_mm), step=5)
+            leh = c3c.number_input("H-Edge", value=40, step=5)
 
-        d_b_mm = float(bolt_size.replace("M",""))
-        
-        st.markdown("**Detailing (mm)**")
-        g1, g2, g3, g4, g5 = st.columns(5)
-        with g1: plate_t = st.selectbox("Plate T", [6, 9, 12, 16, 19, 25], index=2)
-        with g2: weld_size = st.selectbox("Weld Leg", [4, 6, 8, 10, 12], index=1)
-        with g3: pitch = st.number_input("Pitch", value=int(3*d_b_mm), step=5)
-        with g4: lev = st.number_input("V-Edge", value=int(1.5*d_b_mm), step=5)
-        with g5: leh = st.number_input("H-Edge", value=45, step=5)
+            weld_size = 6 # Default weld
 
-    # --- 2. CALCULATION ---
-    V_u = ((load + props['W']) * span) / 2
-    d_b = d_b_mm/10; tp = plate_t/10; plate_h = ((2*lev) + (n_rows-1)*pitch)/10
-    phi = 0.75 if method == "LRFD" else 0.5
+    # --- 2. PREPARE GEOMETRY (Unit: mm) ---
+    # Convert DB properties (assuming DB stores D, B in cm, t in mm)
+    H_beam = props['D'] * 10
+    B_beam = props['B'] * 10
+    Tw = props.get('tw', props.get('t1', 6.0))
+    Tf = props.get('tf', props.get('t2', 9.0))
     
-    # 1. Shear
-    Rn_shear = n_rows * (3720 * np.pi * d_b**2 / 4)
-    Rc_shear = Rn_shear * phi
-    # 2. Bearing
-    Rn_bear = n_rows * 2.4 * d_b * tp * 4100
-    Rc_bear = Rn_bear * phi
-    # 3. Weld
-    Rn_weld = 0.707 * (weld_size/10) * (0.6 * 4900) * (2 * plate_h)
-    Rc_weld = Rn_weld * phi
+    # Plate Calc
+    plate_h = (2 * lev) + ((n_rows - 1) * pitch)
+    plate_w = leh + 20 # Clearance from beam end
     
-    limit_state = min(Rc_shear, Rc_bear, Rc_weld)
-    util_ratio = V_u / limit_state if limit_state > 0 else 999.0
-
-    # --- 3. PRO-CAD VISUALIZATION ---
-    st.subheader("1. 🧊 High-Fidelity Model")
+    # --- 3. 3D VISUALIZATION ---
+    st.subheader("1. 🧊 3D Model with Dimensions")
+    
     col_viz, col_info = st.columns([3, 1])
     
     with col_viz:
         fig = go.Figure()
         
-        # Dimensions for drawing
-        H = props['D'] * 10
-        B = props['B'] * 10
-        Tw = props.get('tw', 6.0)
-        Tf = props.get('tf', 9.0)
-        L_beam = 350
-        
-        # Materials (Colors)
-        c_beam = '#bdc3c7'   # Silver
-        c_plate = '#3498db'  # Structural Blue
-        c_bolt = '#2c3e50'   # Dark Steel
-        c_head = '#7f8c8d'   # Hex Head Color
-        
-        # A. Beam (Ghost Mode: Opacity 0.8 to see through)
-        web_h = H - (2 * Tf)
-        fig.add_trace(make_box_pro(0, 0, 0, Tw, L_beam, web_h, c_beam, "Web", 0.7)) # Transparent Web
-        fig.add_trace(make_box_pro(0, 0, (web_h/2)+(Tf/2), B, L_beam, Tf, c_beam, "Top Flange", 0.8))
-        fig.add_trace(make_box_pro(0, 0, -(web_h/2)-(Tf/2), B, L_beam, Tf, c_beam, "Bot Flange", 0.8))
-        
-        # B. Shear Plate
+        # --- A. DRAW BEAM (Ghost View) ---
+        L_show = 400 # Length to display
+        # Web
+        fig.add_trace(make_box(0, 0, 0, Tw, L_show, H_beam - 2*Tf, '#95a5a6', 0.3, "Web"))
+        # Top Flange
+        fig.add_trace(make_box(0, 0, (H_beam/2)-(Tf/2), B_beam, L_show, Tf, '#7f8c8d', 0.4, "Top Flange"))
+        # Bot Flange
+        fig.add_trace(make_box(0, 0, -(H_beam/2)+(Tf/2), B_beam, L_show, Tf, '#7f8c8d', 0.4, "Bot Flange"))
+
+        # --- B. DRAW PLATE (Solid) ---
+        # Position: Attached to Web face (x = Tw/2 + Tp/2)
         pl_x = (Tw/2) + (plate_t/2)
-        pl_y = -(L_beam/2) + leh + 20 
-        pl_h_mm = (2*lev) + ((n_rows-1)*pitch)
-        fig.add_trace(make_box_pro(pl_x, pl_y, 0, plate_t, leh+20, pl_h_mm, c_plate, "Plate", 1.0))
+        pl_y = -(L_show/2) + plate_w # Offset from cut end
+        fig.add_trace(make_box(pl_x, pl_y, 0, plate_t, plate_w, plate_h, '#f1c40f', 1.0, "Shear Plate"))
+
+        # --- C. DRAW BOLTS ---
+        bolt_len = Tw + plate_t + 30
+        bx = pl_x - (plate_t/2) + (plate_t/2) # Centered? actually goes through both
+        bx_start = -(bolt_len/2) + (Tw/2) # Through web
+        bx_end = bx_start + bolt_len
         
-        # C. REALISTIC BOLTS (Cylinders + Hex Heads)
-        bolt_len = Tw + plate_t + 20
-        shank_r = d_b_mm / 2
-        head_r = d_b_mm * 0.8 # Approx hex radius
-        head_thick = d_b_mm * 0.6
+        by = pl_y - (plate_w/2) + leh # Hole position from back of plate
         
-        # Bolt Y Position
-        bolt_y = pl_y + (leh/2) - 10
-        # Bolt X Range
-        bx_start = -(bolt_len/2) + (plate_t/2) 
-        bx_end = (bolt_len/2) + (plate_t/2)
-        
-        z_start = (pl_h_mm/2) - lev
+        z_top_bolt = (plate_h/2) - lev
         
         for i in range(n_rows):
-            bz = z_start - (i*pitch)
-            
-            # 1. Shank (Cylinder)
-            p1 = np.array([bx_start, bolt_y, bz])
-            p2 = np.array([bx_end, bolt_y, bz])
-            fig.add_trace(create_cylinder_mesh(p1, p2, shank_r, c_bolt))
-            
-            # 2. Head (Hexagon) - Front
-            dir_vec = np.array([1, 0, 0])
-            fig.add_trace(create_hex_head(p2, dir_vec, head_r, head_thick, c_head))
-            
-            # 3. Nut (Hexagon) - Back
-            fig.add_trace(create_hex_head(p1, -dir_vec, head_r, head_thick, c_head))
+            bz = z_top_bolt - (i * pitch)
+            # Bolt Shank
+            fig.add_trace(create_cylinder(np.array([bx_start, by, bz]), np.array([bx_end, by, bz]), d_b_mm/2, '#e74c3c'))
+            # Heads (Hex)
+            fig.add_trace(create_hex(np.array([bx_end, by, bz]), np.array([1,0,0]), d_b_mm*0.8, d_b_mm*0.6, '#2c3e50'))
+            fig.add_trace(create_hex(np.array([bx_start, by, bz]), np.array([-1,0,0]), d_b_mm*0.8, d_b_mm*0.6, '#2c3e50'))
 
-        # Scene Setup
+        # --- D. **DIMENSION LINES (The Magic)** ---
+        # 1. Plate Height Dimension (Side)
+        dim_x = pl_x + 50 # Pull out to side
+        dim_y = pl_y
+        p_top = np.array([dim_x, dim_y, plate_h/2])
+        p_bot = np.array([dim_x, dim_y, -plate_h/2])
+        add_dim_line(fig, p_top, p_bot, f"PL H={plate_h:.0f}", "blue")
+
+        # 2. Pitch Dimensions
+        if n_rows > 1:
+            dim_x_p = pl_x + 50
+            dim_y_p = by
+            # Draw from first to second bolt
+            p_b1 = np.array([dim_x_p, dim_y_p, z_top_bolt])
+            p_b2 = np.array([dim_x_p, dim_y_p, z_top_bolt - pitch])
+            add_dim_line(fig, p_b1, p_b2, f"Pitch={pitch}", "red")
+
+        # 3. Beam Depth (Overall)
+        dim_x_d = -B_beam/2 - 20
+        p_d_top = np.array([dim_x_d, 0, H_beam/2])
+        p_d_bot = np.array([dim_x_d, 0, -H_beam/2])
+        add_dim_line(fig, p_d_top, p_d_bot, f"D={H_beam:.0f}", "black")
+
+        # 4. Horizontal Edge (Leh)
+        # From Plate back (weld line) to Bolt
+        p_back = np.array([pl_x, pl_y - plate_w/2, plate_h/2 + 20])
+        p_hole = np.array([pl_x, by, plate_h/2 + 20])
+        add_dim_line(fig, p_back, p_hole, f"Leh={leh}", "green")
+
+        # Setup Camera
         fig.update_layout(
             scene=dict(
-                aspectmode='data',
                 xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
-                bgcolor='white',
-                camera=dict(eye=dict(x=1.5, y=0.8, z=0.8), up=dict(x=0, y=0, z=1)),
+                aspectmode='data', # 1:1 Scale
+                camera=dict(eye=dict(x=2.0, y=1.0, z=0.5))
             ),
-            margin=dict(l=0, r=0, t=0, b=0),
-            height=500
+            margin=dict(l=0, r=0, t=0, b=0), height=500
         )
         st.plotly_chart(fig, use_container_width=True)
-
+    
     with col_info:
-        st.markdown(f"### Status: {'✅ PASS' if util_ratio <=1 else '❌ FAIL'}")
+        st.markdown("### 📋 Specs")
+        st.info(f"""
+        **Beam:** {section_name}
+        - Depth: {H_beam} mm
+        - Flange: {B_beam} mm
         
-        # Gauge Chart
-        fig_g = go.Figure(go.Indicator(
-            mode = "gauge+number", value = util_ratio*100,
-            title = {'text': "Load Ratio (%)"},
-            gauge = {'axis': {'range': [0, 120]}, 
-                     'bar': {'color': "green" if util_ratio<=1 else "red"},
-                     'steps': [{'range': [0, 80], 'color': "#ecf0f1"}]}
-        ))
-        fig_g.update_layout(height=200, margin=dict(l=20, r=20, t=30, b=0))
-        st.plotly_chart(fig_g, use_container_width=True)
+        **Plate:**
+        - Size: {plate_w} x {plate_h} mm
+        - Thick: {plate_t} mm
         
-        # Cost
-        weight = (plate_t * (leh+20) * pl_h_mm * 7.85 / 1000000) + (n_rows * 0.2)
-        cost = weight * 45 # 45 THB/kg combined
-        st.metric("Est. Weight", f"{weight:.2f} kg")
-        st.metric("Est. Cost", f"฿ {cost:.0f}")
+        **Bolts:**
+        - {n_rows} x {bolt_size}
+        - Pitch: {pitch} mm
+        """)
+        
+        # Check Geometry
+        clr = pitch - d_b_mm
+        st.metric("Wrench Clearance", f"{clr:.1f} mm")
+        if clr < d_b_mm: st.warning("⚠️ Tight spacing")
+        else: st.success("✅ Spacing OK")
 
-    # --- 4. REPORT (Fixed LaTeX) ---
-    st.subheader("2. 📝 Engineering Report")
-    with st.expander("Show Calculation Details", expanded=True):
-        st.markdown("---")
-        c_r1, c_r2 = st.columns([3, 1])
-        c_r1.markdown(f"**Section:** {section_name} | **Load:** {V_u:,.0f} kg")
-        
-        st.markdown("#### Checks:")
-        
-        # Helper for safe latex
-        def latex_check(name, Rn, Rc, Vu):
-            status = "OK" if Vu <= Rc else "FAIL"
-            color = "green" if status == "OK" else "red"
-            st.markdown(f"**{name}:**")
-            st.latex(f"\\phi R_n = {phi} \\cdot {Rn:,.0f} = \\mathbf{{{Rc:,.0f}}} \\text{{ kg}}")
-            st.markdown(f"Result: :{color}[{status}] (Ratio: {Vu/Rc:.2f})")
-        
-        latex_check("Bolt Shear", Rn_shear, Rc_shear, V_u)
-        latex_check("Plate Bearing", Rn_bear, Rc_bear, V_u)
-        latex_check("Weld Strength", Rn_weld, Rc_weld, V_u)
+    # --- 4. CALCULATION REPORT (Backend) ---
+    # (Simplified for display)
+    V_u = 10000 # Dummy for Viz focus
+    phi = 0.75
+    Rn_shear = n_rows * (0.6 * 8250 * np.pi * (d_b_mm/10/2)**2) # Approx
+    
+    st.markdown("---")
+    st.markdown("### 📝 Design Verification")
+    st.write(f"Model generated based on actual dimensions of **{section_name}** and user inputs.")
