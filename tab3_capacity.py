@@ -2,19 +2,20 @@ import streamlit as st
 import pandas as pd
 from calculator import core_calculation
 
-def render_tab3(props, method, Fy, E_gpa, section):
+def render_tab3(props, method, Fy, E_gpa, section, def_val=360):
     """
     Tab 3: Capacity Overview & Zones
     สรุปภาพรวมศักยภาพของหน้าตัด และตารางรับน้ำหนักตามระยะต่างๆ
+    Updated: รับค่า def_val เพื่อคำนวณจุดเปลี่ยนกราฟและตารางให้ถูกต้อง
     """
     st.markdown(f"### 📊 Capacity Summary: {section} ({method})")
-    st.write("Overview of load capacity across different spans and governing failure modes.")
+    st.caption(f"Deflection Limit Criteria: **L/{def_val}** (เกณฑ์การแอ่นตัวที่เลือก)")
     st.markdown("---")
 
     # --- 1. คำนวณหาจุดเปลี่ยน (Critical Transitions) ---
-    # เราใช้ L สมมติ (เช่น 10m) เพื่อส่งเข้า function ไปก่อน เพื่อดึงค่า L_vm, L_md ออกมา
-    # เพราะค่า L_vm, L_md ไม่ขึ้นกับความยาวคาน L ที่เปลี่ยนไป (ขึ้นกับ Section properties เท่านั้น)
-    dummy_calc = core_calculation(10.0, Fy, E_gpa, props, method)
+    # ใช้ L สมมติส่งเข้า function เพื่อดึงค่า L_vm, L_md ออกมา
+    # ต้องส่ง def_val เข้าไปด้วย เพราะจุดเปลี่ยน L_md ขึ้นอยู่กับ Limit ที่เลือก
+    dummy_calc = core_calculation(10.0, Fy, E_gpa, props, method, def_val)
     L_vm = dummy_calc['L_vm']
     L_md = dummy_calc['L_md']
 
@@ -38,58 +39,85 @@ def render_tab3(props, method, Fy, E_gpa, section):
 
     with z3:
         st.success(f"**🟢 Long Span (Deflection)**")
-        st.caption("Deflection Controls")
+        st.caption(f"Deflection (L/{def_val}) Controls")
         st.metric(label="Span Range", value=f"> {L_md:.2f} m")
         st.write("ช่วงยาว: ระยะแอ่นเป็นตัวกำหนด")
 
     st.markdown("---")
 
     # --- 3. Look-up Table Generation (สร้างตาราง) ---
-    st.subheader("2. Capacity Look-up Table (ตารางรับน้ำหนัก)")
+    st.subheader(f"2. Capacity Look-up Table (L/{def_val})")
     st.write("ตารางแสดงน้ำหนักบรรทุกปลอดภัย (Safe Load) ที่ระยะความยาวต่างๆ")
 
-    # สร้างข้อมูลช่วงระยะ 2m ถึง 15m (หรือมากกว่าตามความเหมาะสม)
-    spans = range(2, 16) # 2m to 15m
+    # สร้างข้อมูลช่วงระยะ 2m ถึง 15m
+    spans = range(2, 16) 
     data = []
 
     for L in spans:
-        c = core_calculation(float(L), Fy, E_gpa, props, method)
+        # สำคัญ: ส่ง def_val เข้าไปคำนวณด้วย
+        c = core_calculation(float(L), Fy, E_gpa, props, method, def_val)
         
-        # หาตัว Control
+        # หาตัว Control (Shear, Moment, Deflection)
         capacities = {'Shear': c['ws'], 'Moment': c['wm'], 'Deflection': c['wd']}
         safe_load = min(capacities.values())
         
-        # Determine Control Text
-        if safe_load == c['ws']: control = "Shear"
-        elif safe_load == c['wm']: control = "Moment"
-        else: control = "Deflection"
+        # Determine Control Text & Mode
+        if safe_load == c['ws']: 
+            control_txt = "Shear"
+        elif safe_load == c['wm']: 
+            control_txt = "Moment"
+        else: 
+            control_txt = f"Deflection (L/{def_val})"
+
+        # คำนวณ Net Load (หักน้ำหนักคานออก) เพื่อให้ User ใช้งานได้จริง
+        net_load = max(0, safe_load - props['W'])
 
         data.append({
             "Span (m)": f"{L:.1f}",
-            "Shear Cap. (kg/m)": int(c['ws']),
-            "Moment Cap. (kg/m)": int(c['wm']),
-            "Deflection Lim. (kg/m)": int(c['wd']),
-            "✅ Safe Load (kg/m)": int(safe_load),
-            "Mode": control
+            "Shear Cap.": int(c['ws']),
+            "Moment Cap.": int(c['wm']),
+            "Deflection Cap.": int(c['wd']),
+            "✅ Net Safe Load": int(net_load), # น้ำหนักที่รับเพิ่มได้จริง (Safe - Weight)
+            "Mode": control_txt
         })
 
     df = pd.DataFrame(data)
 
-    # Highlight Function
+    # Highlight Function สำหรับ Pandas Styler
     def highlight_mode(row):
         mode = row['Mode']
         color = ''
-        if mode == 'Shear': color = 'background-color: #ffcccc' # Red tint
-        elif mode == 'Moment': color = 'background-color: #ffedcc' # Orange tint
-        elif mode == 'Deflection': color = 'background-color: #ccffcc' # Green tint
+        if 'Shear' in mode: 
+            color = 'background-color: #ffcccc; color: black' # Red tint
+        elif 'Moment' in mode: 
+            color = 'background-color: #ffedcc; color: black' # Orange tint
+        elif 'Deflection' in mode: 
+            color = 'background-color: #ccffcc; color: black' # Green tint
         return [color if col == 'Mode' else '' for col in row.index]
 
-    # แสดงตาราง
+    # แสดงตารางด้วย Styler
     st.dataframe(
         df.style.apply(highlight_mode, axis=1),
         use_container_width=True,
         hide_index=True,
-        height=500
+        column_config={
+            "Span (m)": st.column_config.TextColumn("Span (m)", help="ความยาวคาน"),
+            "✅ Net Safe Load": st.column_config.NumberColumn("✅ Safe Load (kg/m)", help="น้ำหนักบรรทุกปลอดภัยสุทธิ (หักน้ำหนักคานแล้ว)"),
+            "Mode": st.column_config.TextColumn("Governing Case", width="medium"),
+            "Shear Cap.": st.column_config.NumberColumn("Shear Limit", format="%d"),
+            "Moment Cap.": st.column_config.NumberColumn("Moment Limit", format="%d"),
+            "Deflection Cap.": st.column_config.NumberColumn("Deflect Limit", format="%d"),
+        },
+        height=600
     )
     
-    st.caption("*Safe Load shown includes beam weight. (น้ำหนักที่แสดงรวมน้ำหนักตัวเองของคานแล้ว)")
+    st.caption(f"**Note:** 'Safe Load' คือน้ำหนักบรรทุกภายนอกที่รับได้ (หักน้ำหนักตัวเองของคาน {props['W']} kg/m ออกแล้ว)")
+    
+    # Export CSV Button
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Table as CSV",
+        data=csv,
+        file_name=f'capacity_{section}_L{def_val}.csv',
+        mime='text/csv',
+    )
