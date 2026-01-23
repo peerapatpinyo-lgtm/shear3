@@ -5,21 +5,13 @@ from database import SYS_H_BEAMS
 from drawer_3d import create_connection_figure
 
 # ==========================================
-# 📐 HELPER: COMPATIBILITY CHECKER
+# 📐 HELPER: CALCULATION
 # ==========================================
 def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
-    """Calculate the maximum number of rows possible for this beam depth."""
-    # Workable T-distance
+    """คำนวณจำนวนแถวสูงสุดที่เป็นไปได้ในคานนี้"""
     workable_depth = beam_d - (2 * k_dist) 
-    # Or strict clearance: Web Depth - Clearances
     available_h = beam_d - (2 * beam_tf) - margin_top - margin_bot
-    
-    # Formula: h_plate = 2*lev + (n-1)*s
-    # We need: available_h >= h_plate
-    if available_h <= (2 * lev):
-        return 0
-    
-    # derived from: available_h - 2*lev >= (n-1)*s
+    if available_h <= (2 * lev): return 0
     max_n = int(((available_h - (2 * lev)) / pitch) + 1)
     return max(0, max_n)
 
@@ -28,12 +20,12 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
 # ==========================================
 
 def render_tab6(method, Fy, E_gpa, def_limit):
-    st.markdown("### 🏗️ Detailed Shear Connection Design")
+    st.markdown("### 🏗️ Shear Plate Design (Professional)")
     
-    col_input, col_viz = st.columns([1.2, 2.5])
+    col_input, col_viz = st.columns([1.3, 2.5]) # ขยายช่อง Input นิดนึง
 
     # ==========================================
-    # 🔴 1. INPUT PANEL (DEEP DETAIL)
+    # 🔴 1. INPUT PANEL
     # ==========================================
     with col_input:
         
@@ -41,85 +33,91 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         with st.expander("1️⃣ Host Beam & Load", expanded=True):
             sec_name = st.selectbox("Section", list(SYS_H_BEAMS.keys()))
             beam = SYS_H_BEAMS[sec_name]
-            
-            # Unit conversions
             d_factor = 10 if beam['D'] < 100 else 1
             bm_D = beam['D'] * d_factor
             bm_Tw = beam.get('t1', 6.0)
             bm_Tf = beam.get('t2', 9.0)
-            k_des = 30 # Assumed k distance
-            
-            st.caption(f"Depth: {bm_D:.0f} | Web: {bm_Tw} | Workable T: {bm_D - 2*k_des:.0f} mm")
-            
-            Vu_load = st.number_input("Factored Load, Vu (kg)", value=5000.0, step=500.0)
+            k_des = 30 
+            st.caption(f"D:{bm_D:.0f} | Tw:{bm_Tw} | Workable:{bm_D - 2*k_des:.0f}")
+            Vu_load = st.number_input("Factored Load (kg)", value=5000.0, step=500.0)
 
-        # --- B. BOLT ASSEMBLY (DETAIL) ---
-        with st.expander("2️⃣ Bolt Assembly Spec", expanded=True):
+        # --- B. BOLT ASSEMBLY ---
+        with st.expander("2️⃣ Bolt Assembly", expanded=True):
             c1, c2 = st.columns(2)
             bolt_dia = c1.selectbox("Dia.", ["M16", "M20", "M22", "M24"], index=1)
             bolt_grade = c2.selectbox("Grade", ["A325", "A490", "Gr.8.8"], index=0)
-            
             d_b = float(bolt_dia.replace("M",""))
             
-            # Detailed Condition
-            thread_cond = st.radio("Thread Condition", ["N (Included in Shear)", "X (Excluded)"], index=0, help="N: Threads in shear plane\nX: Threads excluded from shear plane")
-            hole_type = st.selectbox("Hole Type", ["STD (Standard)", "OVS (Oversize)", "SSL (Short Slot)", "LSL (Long Slot)"])
-            
-            st.info(f"Hole Size: {d_b + (2 if d_b < 24 else 3)} mm")
+            thread_cond = st.radio("Threads", ["N (Included)", "X (Excluded)"], horizontal=True)
+            hole_type = st.selectbox("Hole Type", ["STD", "OVS", "SSL", "LSL"])
 
-        # --- C. PLATE & WELD ---
-        with st.expander("3️⃣ Plate & Weld", expanded=True):
-            plate_grade = st.selectbox("Plate Mat.", ["A36 (Fy=250)", "A572-50 (Fy=345)", "SS400"], index=0)
-            c3, c4 = st.columns(2)
-            plate_t = c3.selectbox("Thick (tp)", [6, 9, 10, 12, 16, 19, 20, 25], index=3)
-            weld_sz = c4.selectbox("Weld (mm)", [4, 5, 6, 8, 10], index=2, help="Fillet weld size at support")
-
-        # --- D. GEOMETRY LAYOUT (CRITICAL FIX APPLIED) ---
-        with st.expander("4️⃣ Layout & Dimensions", expanded=True):
+        # --- C. GEOMETRY (PITCH & EDGE) ---
+        with st.expander("3️⃣ Connection Geometry", expanded=True):
+            st.markdown("**Bolt Spacing:**")
+            cg1, cg2 = st.columns(2)
+            pitch = cg1.number_input("Pitch (s)", value=int(3*d_b), min_value=int(2.67*d_b))
+            lev = cg2.number_input("V-Edge (Lev)", value=int(1.5*d_b), min_value=int(1.25*d_b))
             
-            # 1. Pitch & Edge Controls
-            st.markdown("**Spacing Constraints:**")
-            col_g1, col_g2 = st.columns(2)
-            pitch = col_g1.number_input("Pitch (s)", value=int(3*d_b), min_value=int(2.67*d_b), help="Distance center-to-center")
-            lev = col_g2.number_input("V-Edge (Lev)", value=int(1.5*d_b), min_value=int(1.25*d_b))
-            
-            # 2. Row Calculation & Validation (FIXED LOGIC)
-            # Calculate physical limit
+            # Row Calculation with Safety
             max_rows_physical = get_max_rows(bm_D, bm_Tf, k_des, 10, 10, pitch, lev)
+            st.markdown(f"**Rows (Max {max_rows_physical}):**")
+            w_min, w_max = 2, max(2, max_rows_physical)
+            w_def = max(2, min(3, max_rows_physical))
+            n_rows = st.number_input("No. of Rows", min_value=w_min, max_value=w_max, value=w_def)
             
-            st.markdown(f"**Row Config (Max Fit: {max_rows_physical}):**")
-            
-            # --- SAFE WIDGET LOGIC ---
-            # Ensure widget min/max are valid (min must be <= max)
-            # We enforce min_value=2 for the widget to exist properly, 
-            # even if the beam can only hold 0 or 1 row.
-            w_min = 2
-            w_max = max(2, max_rows_physical) 
-            w_default = max(2, min(3, max_rows_physical)) # Try to be 3, but clamp to limits
-
-            n_rows = st.number_input(
-                "No. of Rows", 
-                min_value=w_min, 
-                max_value=w_max, 
-                value=w_default
-            )
-            
-            # Visual Warning if physical geometry fails
             if max_rows_physical < 2:
-                st.warning(f"⚠️ Beam is too shallow for 2 rows with current Pitch/Lev! (Max possible: {max_rows_physical})")
+                st.warning(f"⚠️ Beam too small for 2 rows!")
+
+            st.markdown("---")
+            st.markdown("**Horizontal Layout:**")
+            setback = st.slider("Setback (c)", 0, 25, 12, help="Gap between beam end and support")
+            leh = st.number_input("H-Edge (Leh)", value=40, min_value=int(1.25*d_b), help="Distance from hole to beam end")
+
+        # --- D. PLATE DIMENSIONS (NEW FEATURES) ---
+        with st.expander("4️⃣ Plate Dimensions (Size)", expanded=True):
+            st.markdown("#### Plate Width Control")
             
-            # 3. Horizontal Setup
-            st.markdown("**Horizontal Setup:**")
-            setback = st.slider("Setback (Gap)", 0, 25, 12)
-            leh = st.number_input("H-Edge (Leh)", value=40, min_value=int(1.25*d_b))
+            # คำนวณความกว้างขั้นต่ำที่ต้องการ (Min Width Required)
+            # Min Width = Setback + Leh + Min_Edge_Tail
+            min_tail_edge = int(1.25 * d_b) # ระยะขอบหลังรูน็อต (ฝั่งเชื่อม)
+            min_width_req = setback + leh + min_tail_edge
+            
+            width_mode = st.radio("Width Mode", ["Auto (Min)", "Manual (Flat Bar)"], horizontal=True)
+            
+            if width_mode == "Auto (Min)":
+                pl_w = min_width_req
+                st.info(f"Auto Width = {pl_w} mm (Edge Tail = {min_tail_edge} mm)")
+            else:
+                # ให้เลือกจากขนาด Standard Flat Bar หรือพิมพ์เอง
+                std_widths = [75, 90, 100, 125, 150, 200, 250]
+                rec_idx = 0
+                for i, w in enumerate(std_widths):
+                    if w >= min_width_req:
+                        rec_idx = i
+                        break
+                
+                pl_w = st.selectbox("Select Flat Bar Width (mm)", std_widths, index=rec_idx)
+                
+                # Check actual tail edge distance
+                actual_tail_edge = pl_w - setback - leh
+                if actual_tail_edge < d_b: # Simple check
+                    st.error(f"❌ Width {pl_w} mm is too small! Tail edge = {actual_tail_edge} mm")
+                else:
+                    st.success(f"Tail Edge Distance = {actual_tail_edge} mm")
+
+            st.markdown("---")
+            c3, c4 = st.columns(2)
+            plate_t = c3.selectbox("Thick (tp)", [6, 9, 10, 12, 16, 19, 25], index=3)
+            weld_sz = c4.selectbox("Weld (mm)", [4, 5, 6, 8, 10], index=2)
+            
+            # Height Calculation (Always Auto based on Lev usually, or allow override if needed)
+            pl_h = (2 * lev) + ((n_rows - 1) * pitch)
+            st.caption(f"Plate Height = {pl_h} mm (Auto)")
 
     # ==========================================
-    # 🔵 2. VISUALIZATION & LOGIC
+    # 🔵 2. VISUALIZATION
     # ==========================================
     with col_viz:
-        # Calculate Derived Dimensions
-        pl_h = (2 * lev) + ((n_rows - 1) * pitch)
-        pl_w = setback + leh + 40 # +40 for tail clearance
         
         # --- TAB DISPLAY ---
         tab1, tab2 = st.tabs(["🧊 3D Fabrication Model", "📋 Engineering Summary"])
@@ -134,28 +132,27 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             fig = create_connection_figure(beam_dims, plate_dims, bolt_dims, config)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Quick Check Badge
+            # Geometry Check Banner
             if pl_h > (bm_D - 2*bm_Tf):
-                st.error(f"🚨 **CRITICAL GEOMETRY ERROR:** Plate height ({pl_h} mm) exceeds Web depth!")
+                st.error(f"🚨 Plate Height ({pl_h}) exceeds Web Depth!")
             else:
-                st.success(f"✅ Geometry Fits: Plate H {pl_h} mm < Web Clear {bm_D - 2*bm_Tf:.0f} mm")
+                pass # OK
 
         with tab2:
             st.markdown("#### ⚙️ Fabrication Specification")
             
             # Summary Table
             summ_data = {
-                "Parameter": ["Bolt Spec", "Hole Type", "Threads", "Plate Size", "Weld Size", "Geometry (s / Lev / Leh)"],
-                "Value": [
+                "Item": ["Bolt", "Hole", "Thread", "Plate (WxHxt)", "Weld", "Tail Edge Dist."],
+                "Spec": [
                     f"{n_rows} - {bolt_dia} {bolt_grade}",
                     hole_type,
-                    f"Shear Plane: {'Excluded' if 'X' in thread_cond else 'Included'}",
-                    f"PL{plate_t} x {pl_w} x {pl_h} mm ({plate_grade.split()[0]})",
-                    f"{weld_sz} mm Fillet (E70XX)",
-                    f"{pitch} / {lev} / {leh} mm"
+                    f"{'Excluded' if 'X' in thread_cond else 'Included'}",
+                    f"PL {pl_w} x {pl_h} x {plate_t} mm",
+                    f"{weld_sz} mm Fillet",
+                    f"{pl_w - setback - leh} mm"
                 ]
             }
             st.table(pd.DataFrame(summ_data))
             
-            st.markdown("---")
-            st.info("💡 **Note:** Bolt length to be determined based on Grip = Tw + tp + Washer + Nut + Stickout.")
+            st.info(f"**Material Take-off:** 1 Plate = {pl_w/1000 * pl_h/1000 * plate_t/1000 * 7850:.2f} kg")
