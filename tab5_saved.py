@@ -2,33 +2,46 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
 def render_tab5(method, Fy, E_gpa, def_limit):
-    st.markdown("### 📊 Structural Zone Visualization")
-    st.caption(f"Visualizing Shear Limit, Moment Zone, and 75% Capacity Span. (Deflection Limit: **L/{def_limit}**)")
+    st.markdown("### 🚀 Master Structural Dashboard")
+    st.caption(f"Decision Intelligence Tool: Compare Efficiency, Zones, and Capacity. (Deflection Limit: **L/{def_limit}**)")
 
-    # 1. Prepare Data
-    # เรียงจากใหญ่ไปเล็ก เพื่อให้กราฟแท่งใหญ่อยู่ด้านบน (หรือสลับตามต้องการ)
-    # ตรงนี้เรียงเล็กไปใหญ่ (Small -> Large) กราฟจะดูง่ายกว่าเหมือนขั้นบันได
-    all_sections = sorted(SYS_H_BEAMS.keys(), key=lambda x: int(x.split('x')[0].split('-')[1]))
+    # --- 1. Control Panel (ตัวกรองและการเรียงลำดับ) ---
+    col_sort, col_dummy = st.columns([1, 3])
+    with col_sort:
+        sort_mode = st.radio(
+            "⚡ Sort By:",
+            ["Section Depth (Size)", "Weight (Lightest First)", "Span @ 75% (Longest First)"],
+            horizontal=False
+        )
+
+    # --- 2. Data Processing Engine ---
+    all_sections = list(SYS_H_BEAMS.keys())
     
     data_list = []
     
-    # Progress Bar
-    prog_bar = st.progress(0, text="Generating visualization...")
+    # Progress Bar UI
+    prog_text = "Processing structural physics for all sections..."
+    prog_bar = st.progress(0, text=prog_text)
     total = len(all_sections)
 
     for i, section_name in enumerate(all_sections):
         props = SYS_H_BEAMS[section_name]
         c = core_calculation(10.0, Fy, E_gpa, props, method, def_limit)
         
-        # Critical Lengths
+        # Zone Boundaries
         L_vm = c['L_vm']  # Shear Limit
-        L_md = c['L_md']  # Moment Limit (End of Moment Zone)
+        L_md = c['L_md']  # Moment Limit
         
-        # 75% Scenario Calculation
+        # Deflection starts governing after L_md. 
+        # Let's define a "Visual Max" to plot the Deflection zone reasonably (e.g., +5m from Moment limit)
+        L_visual_end = max(15.0, L_md * 1.3) 
+
+        # Load Scenarios
         if L_vm > 0:
             w_max = (2 * c['V_des'] / (L_vm * 100)) * 100
         else:
@@ -39,117 +52,141 @@ def render_tab5(method, Fy, E_gpa, def_limit):
             L_75 = np.sqrt((8 * c['M_des']) / (w_75 / 100)) / 100
         else:
             L_75 = 0
+            
+        # Efficiency Ratio (Span per Weight) -> ยิ่งเยอะยิ่งคุ้ม
+        eff_ratio = L_75 / props['W']
 
         data_list.append({
             "Section": section_name,
-            "L_shear": L_vm,             # ความยาวช่วง Shear
-            "L_moment_width": max(0, L_md - L_vm), # ความกว้างของ Moment Zone
-            "L_total_moment": L_md,      # จุดจบ Moment Zone (สำหรับ Tooltip)
+            "Depth_Int": int(section_name.split('x')[0].split('-')[1]), # For sorting
+            "Weight": props['W'],
+            "Ix": props['Ix'],
+            "L_shear": L_vm,
+            "L_moment_width": max(0, L_md - L_vm),
+            "L_deflection_width": max(0, L_visual_end - L_md),
+            "L_moment_end": L_md,
             "L_75": L_75,
             "Max_Load": w_max,
-            "Load_75": w_75
+            "Load_75": w_75,
+            "Efficiency": eff_ratio
         })
         prog_bar.progress((i + 1) / total, text=f"Analyzing {section_name}...")
     
     prog_bar.empty()
     df = pd.DataFrame(data_list)
 
-    # 2. Plotly Visualization (Gantt-Style)
-    fig = go.Figure()
+    # --- Sorting Logic ---
+    if "Weight" in sort_mode:
+        df = df.sort_values(by="Weight", ascending=False) # Heavy top (chart looks like pyramid) or swap
+        chart_category_order = df['Section'].tolist() # เรียงตามน้ำหนัก
+    elif "Span" in sort_mode:
+        df = df.sort_values(by="L_75", ascending=True) # Shortest top
+        chart_category_order = df['Section'].tolist()
+    else: # Default Depth
+        # Sort by depth (numeric)
+        df = df.sort_values(by="Depth_Int", ascending=True) # Smallest top
+        chart_category_order = df['Section'].tolist()
 
-    # Layer 1: Shear Zone (0 to L_vm) -> สีแดง
-    fig.add_trace(go.Bar(
-        y=df['Section'],
-        x=df['L_shear'],
-        name='Shear Zone',
-        orientation='h',
-        marker=dict(color='#d9534f', line=dict(width=0)), # Bootstrap Danger Color
-        hovertemplate=(
-            "<b>%{y}</b><br>" +
-            "🛑 Shear Control Range: 0 - %{x:.2f} m<br>" +
-            "Max Load: %{customdata:,.0f} kg/m<extra></extra>"
-        ),
-        customdata=df['Max_Load']
+
+    # --- 3. The "Efficiency Matrix" (New Feature!) ---
+    st.markdown("#### 💎 Efficiency Matrix: Weight vs. Span")
+    st.info("💡 **เทคนิคการเลือก:** มองหาจุดที่อยู่ **ขวาล่าง** (น้ำหนักเบา แต่พาดได้ไกล) คือจุดที่คุ้มค่าที่สุด")
+    
+    fig_scatter = px.scatter(
+        df, 
+        x="L_75", 
+        y="Weight", 
+        size="Max_Load", # ขนาดจุด = รับ Load สูงสุดได้มาก
+        color="Efficiency", # สี = ความคุ้มค่า
+        hover_name="Section",
+        text="Section",
+        color_continuous_scale="Viridis",
+        labels={"L_75": "Achievable Span @ 75% Load (m)", "Weight": "Steel Weight (kg/m)", "Efficiency": "Score"},
+        title="Optimization Map (Size of bubble = Max Load Capacity)"
+    )
+    fig_scatter.update_traces(textposition='top center')
+    fig_scatter.update_layout(height=600, template="plotly_white")
+    st.plotly_chart(fig_scatter, use_container_width=True)
+
+
+    # --- 4. The "Complete Timeline" (Upgraded Gantt) ---
+    st.markdown("---")
+    st.markdown("#### 🚥 Structural Behavior Timeline")
+    
+    fig_timeline = go.Figure()
+
+    # Layer 1: Shear (Red)
+    fig_timeline.add_trace(go.Bar(
+        y=df['Section'], x=df['L_shear'],
+        name='Shear Zone', orientation='h',
+        marker=dict(color='#d9534f'), # Red
+        hovertemplate="<b>Shear Control</b><br>Range: 0 - %{x:.2f} m<extra></extra>"
     ))
 
-    # Layer 2: Moment Zone (L_vm to L_md) -> สีส้ม (Highlight)
-    # ใช้การ Stack ต่อจาก Shear Zone
-    fig.add_trace(go.Bar(
-        y=df['Section'],
-        x=df['L_moment_width'], # ความกว้างของโซน
-        name='Moment Zone',
-        orientation='h',
-        marker=dict(color='#f0ad4e', line=dict(width=0)), # Bootstrap Warning Color
-        hovertemplate=(
-            "<b>Moment Zone (Highlight)</b><br>" +
-            "⚠️ Range: %{base:.2f} m - %{customdata:.2f} m<br>" +
-            "(Distance controlled by Bending)<extra></extra>"
-        ),
-        base=df['L_shear'], # จุดเริ่มต้นของแท่งนี้คือจุดจบของ Shear
-        customdata=df['L_total_moment'] # ส่งค่าจุดจบไปแสดงใน Tooltip
+    # Layer 2: Moment (Orange)
+    fig_timeline.add_trace(go.Bar(
+        y=df['Section'], x=df['L_moment_width'],
+        name='Moment Zone', orientation='h',
+        marker=dict(color='#f0ad4e'), # Orange
+        base=df['L_shear'], # Stack on Shear
+        hovertemplate="<b>Moment Control</b><br>Range: (Shear End) - %{customdata:.2f} m<extra></extra>",
+        customdata=df['L_moment_end']
+    ))
+    
+    # Layer 3: Deflection (Green - NEW!)
+    fig_timeline.add_trace(go.Bar(
+        y=df['Section'], x=df['L_deflection_width'],
+        name='Deflection Zone', orientation='h',
+        marker=dict(color='#5cb85c', opacity=0.4), # Green (Fade)
+        base=df['L_moment_end'], # Stack on Moment
+        hovertemplate="<b>Deflection Control</b><br>Range: > %{base:.2f} m<br>(Long span requires checking deflection)<extra></extra>"
     ))
 
-    # Layer 3: 75% Capacity Marker -> จุดเพชรสีน้ำเงิน
-    fig.add_trace(go.Scatter(
-        x=df['L_75'],
-        y=df['Section'],
-        mode='markers',
-        name='Span @ 75% Load',
-        marker=dict(symbol='diamond', size=10, color='#0275d8', line=dict(width=1, color='white')),
-        hovertemplate=(
-            "<b>Span @ 75% Capacity</b><br>" +
-            "📍 Distance: %{x:.2f} m<br>" +
-            "Load: %{customdata:,.0f} kg/m<extra></extra>"
-        ),
+    # Layer 4: Marker @ 75% (Diamond)
+    fig_timeline.add_trace(go.Scatter(
+        x=df['L_75'], y=df['Section'],
+        mode='markers', name='Span @ 75%',
+        marker=dict(symbol='diamond', size=9, color='#0275d8', line=dict(width=1, color='white')),
+        hovertemplate="<b>Current Design (75%)</b><br>Span: %{x:.2f} m<br>Load: %{customdata:,.0f} kg/m<extra></extra>",
         customdata=df['Load_75']
     ))
 
-    # Layout Settings
-    fig.update_layout(
-        title="Structural Zones & Capacity Timeline",
-        barmode='stack', # ให้แท่งต่อกัน
-        height=800,      # สูงหน่อยเพราะหน้าตัดเยอะ
+    fig_timeline.update_layout(
+        barmode='stack',
+        height=900, # สูงขึ้นเพื่อให้เห็นทุกตัวชัดๆ
         xaxis_title="Span Length (m)",
-        yaxis_title="Section Size",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="closest",
+        yaxis=dict(categoryorder='array', categoryarray=chart_category_order),
+        legend=dict(orientation="h", y=1.02, x=1, xanchor="right"),
         template="plotly_white",
-        yaxis=dict(
-            categoryorder='array', 
-            categoryarray=df['Section'].tolist() # บังคับเรียงตามที่ส่งไป (เล็ก -> ใหญ่)
+        margin=dict(l=150) # เผื่อพื้นที่ชื่อแกน Y
+    )
+    st.plotly_chart(fig_timeline, use_container_width=True)
+
+    # --- 5. Data Table (เหมือนเดิมแต่ครบถ้วน) ---
+    with st.expander("📄 Show Detailed Data Table", expanded=False):
+        # Format for display
+        df_display = df.copy()
+        df_display['Moment Range'] = df.apply(lambda r: f"{r['L_shear']:.2f} - {r['L_moment_end']:.2f}", axis=1)
+        
+        st.dataframe(
+            df_display,
+            column_config={
+                "Section": st.column_config.TextColumn("Section", pinned=True),
+                "Efficiency": st.column_config.ProgressColumn(
+                    "Efficiency Score", 
+                    format="%.2f", 
+                    min_value=0, 
+                    max_value=float(df['Efficiency'].max()),
+                    help="Span Length per unit Weight (Higher is better)"
+                ),
+                "L_shear": st.column_config.NumberColumn("Shear Limit", format="%.2f m"),
+                "Moment Range": st.column_config.TextColumn("Moment Zone", width="medium"),
+                "L_75": st.column_config.NumberColumn("Span @ 75%", format="%.2f m"),
+                "Weight": st.column_config.NumberColumn("Weight", format="%.1f kg/m"),
+            },
+            hide_index=True,
+            use_container_width=True
         )
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # 3. Show Detailed Table (เหมือนเดิมด้านล่าง)
-    st.markdown("---")
-    st.markdown("### 📋 Detailed Data Table")
-    
-    # (ส่วนตาราง Code เดิม แต่เปลี่ยนชื่อตัวแปรนิดหน่อยเพื่อให้สั้นลงในส่วนนี้)
-    # Re-map DataFrame columns for display
-    df_display = df.copy()
-    df_display['Ix'] = [SYS_H_BEAMS[s]['Ix'] for s in df['Section']] # ดึงค่า Ix มาใส่ใหม่
-    df_display['Weight'] = [SYS_H_BEAMS[s]['W'] for s in df['Section']]
-    
-    # สร้าง String Moment Range
-    df_display['Moment Range'] = df.apply(lambda row: f"{row['L_shear']:.2f} - {row['L_total_moment']:.2f}", axis=1)
-
-    st.dataframe(
-        df_display[['Section', 'Weight', 'Ix', 'L_shear', 'Moment Range', 'Max_Load', 'L_75', 'Load_75']],
-        use_container_width=True,
-        height=500,
-        hide_index=True,
-        column_config={
-            "Section": st.column_config.TextColumn("Section", pinned=True),
-            "L_shear": st.column_config.NumberColumn("Shear Limit (m)", format="%.2f"),
-            "Moment Range": st.column_config.TextColumn("Moment Zone (m)", width="medium"),
-            "L_75": st.column_config.NumberColumn("Span @ 75% (m)", format="%.2f"),
-            "Max_Load": st.column_config.NumberColumn("Max Load (kg/m)", format="%d"),
-            "Load_75": st.column_config.NumberColumn("Load @ 75%", format="%d")
-        }
-    )
-    
-    # CSV Download
-    csv = df_display.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Data CSV", csv, "SYS_Visual_Analysis.csv", "text/csv")
+        
+        csv = df_display.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Full CSV", csv, "SYS_Ultimate_Analysis.csv", "text/csv")
