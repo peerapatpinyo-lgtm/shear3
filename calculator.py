@@ -85,6 +85,8 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method, def_limit=360):
         
         V_des = Vn / omega_v
         M_des = Mn / omega_b
+        # กำลังดัดสูงสุดที่ยอมให้ (ไม่มีการลดทอนจาก LTB) เพื่อใช้หาจุดเปลี่ยนคงที่
+        M_des_full = Mp / omega_b
         
         txt_v_method = r"V_{design} = \frac{V_n}{\Omega_v} (\Omega_v=1.50)"
         txt_m_method = r"M_{design} = \frac{M_n}{\Omega_b} (\Omega_b=1.67)"
@@ -95,6 +97,8 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method, def_limit=360):
         
         V_des = Vn * phi_v
         M_des = Mn * phi_b
+        # กำลังดัดสูงสุดที่ยอมให้ (ไม่มีการลดทอนจาก LTB) เพื่อใช้หาจุดเปลี่ยนคงที่
+        M_des_full = Mp * phi_b
         
         txt_v_method = r"V_{design} = \phi_v V_n (\phi_v=1.00)"
         txt_m_method = r"M_{design} = \phi_b M_n (\phi_b=0.90)"
@@ -110,13 +114,13 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method, def_limit=360):
     wd = ((384 * E_ksc * props['Ix'] * delta_allow) / (5 * L_cm**4)) * 100
     
     # --- 7. Critical Transition Lengths ---
-    # Derived from equating ws=wm and wm=wd
-    L_vm_cm = (4 * M_des) / V_des
+    # Derived from equating ws=wm และ wm=wd โดยใช้ M_des_full เพื่อให้ค่าคงที่
+    L_vm_cm = (4 * M_des_full) / V_des
     
     # L_md derivation:
     # 8 M / L^2 = (384 E I) / (5 * L^3 * Limit)
     # L = (384 E I) / (40 * M * Limit)
-    L_md_cm = (384 * E_ksc * props['Ix']) / (40 * M_des * def_limit)
+    L_md_cm = (384 * E_ksc * props['Ix']) / (40 * M_des_full * def_limit)
 
     return {
         "Aw": Aw, "Ix": props['Ix'], "Zx": props['Zx'], "Sx": Sx,
@@ -124,7 +128,7 @@ def core_calculation(L_m, Fy_ksc, E_gpa, props, method, def_limit=360):
         "Vn": Vn, "Mn": Mn, "Mp": Mp,
         "omega_v": omega_v, "omega_b": omega_b,
         "phi_v": phi_v, "phi_b": phi_b,
-        "V_des": V_des, "M_des": M_des,
+        "V_des": V_des, "M_des": M_des, "M_des_full": M_des_full,
         "txt_v_method": txt_v_method, "txt_m_method": txt_m_method,
         "ws": ws, "wm": wm, "wd": wd, 
         "delta": delta_allow, "def_limit": def_limit,
