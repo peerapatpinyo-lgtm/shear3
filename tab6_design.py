@@ -1,262 +1,281 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import plotly.graph_objects as go
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
 def render_tab6(method, Fy, E_gpa, def_limit):
-    st.markdown("### 🏗️ Professional Connection Studio")
-    st.caption(f"Code Reference: **AISC 360-16 ({method})** | Scope: Shear Tab Connection (Single Column)")
-
-    # --- 1. GLOBAL INPUTS ---
-    with st.expander("🔹 Beam & Load Configuration", expanded=True):
-        col1, col2 = st.columns([1, 2])
-        with col1:
+    # --- HEADER ---
+    st.markdown("### 🏗️ Ultimate Connection Studio")
+    st.caption(f"Standard: **AISC 360-16 ({method})** | Type: **Single Plate Shear Connection (Shear Tab)**")
+    
+    # --- 1. GLOBAL LOAD & BEAM SELECTION ---
+    with st.expander("🔹 1. Beam & Load Analysis (วิเคราะห์แรงจากคาน)", expanded=True):
+        col_b1, col_b2, col_b3 = st.columns([1.5, 1, 1])
+        with col_b1:
             section_name = st.selectbox("Select Beam Section:", list(SYS_H_BEAMS.keys()))
+            props = SYS_H_BEAMS[section_name]
+            w_sw = props['W']
         
-        props = SYS_H_BEAMS[section_name]
-        w_sw = props['W']
-
-        # Auto Calculate Reference Capacity
+        # Auto-calc Reference
         c_ref = core_calculation(6.0, Fy, E_gpa, props, method, def_limit)
         L_vm = c_ref['L_vm']
-        w_gross = (2 * c_ref['V_des'] / (L_vm * 100)) * 100 if L_vm > 0 else 0
-        w_net = max(0, w_gross - w_sw)
-        
-        with col2:
-            st.info(f"Design Capacity suggestion (75%): **{0.75*w_net:,.0f} kg/m**")
-            
-        c_i1, c_i2 = st.columns(2)
-        span = c_i1.slider("Span Length (m):", 1.0, 15.0, 6.0)
-        load = c_i2.number_input("External Load (kg/m):", value=float(int(0.75*w_net)), step=100.0)
+        w_max_cap = (2 * c_ref['V_des'] / (L_vm * 100)) * 100 if L_vm > 0 else 0
+        w_design_rec = 0.75 * max(0, w_max_cap - w_sw)
 
-        # Force Calculation
+        with col_b2:
+            span = st.number_input("Span Length (m)", value=6.0, step=0.5)
+        with col_b3:
+            load = st.number_input("Superimposed Load (kg/m)", value=float(int(w_design_rec)), step=100.0)
+            
+        # Analysis
         w_total = load + w_sw
-        V_u = (w_total * span) / 2          # Reaction (Shear Demand)
-        M_u = (w_total * span**2) / 8 * 100
+        V_u = (w_total * span) / 2
         
-        # Quick Beam Check
+        # Beam Capacity Check
         c_chk = core_calculation(span, Fy, E_gpa, props, method, def_limit)
         beam_ratio = V_u / c_chk['V_des']
-        if beam_ratio > 1.0:
-            st.warning(f"⚠️ Beam Shear Ratio: {beam_ratio:.2f}")
+        
+        # Status Bar for Beam
+        st.markdown("---")
+        c_res1, c_res2, c_res3 = st.columns(3)
+        c_res1.metric("Reaction Force (Vu)", f"{V_u:,.0f} kg", help="แรงเฉือนที่จุดต่อต้องรับ")
+        c_res2.metric("Beam Shear Cap.", f"{c_chk['V_des']:,.0f} kg", delta_color="inverse", 
+                      delta="PASS" if beam_ratio <= 1 else "FAIL")
+        c_res3.metric("Utilization", f"{beam_ratio*100:.1f} %")
 
     # ==============================================================================
-    # 🔩 CONNECTION DESIGN PARAMETERS
+    # 🔩 2. CONNECTION DESIGN STUDIO
     # ==============================================================================
     st.subheader("2. 🔩 Connection Detailing")
     
-    col_c1, col_c2, col_c3 = st.columns(3)
+    col_ui, col_viz = st.columns([1, 1.8])
     
-    with col_c1:
-        st.markdown("**Bolt Config (Single Col)**")
-        bolt_grade = st.selectbox("Bolt Grade", ["A325N", "A307"], index=0)
-        bolt_size = st.selectbox("Bolt Size", ["M12", "M16", "M20", "M22", "M24"], index=2)
-        n_rows = st.number_input("Rows (No. of Bolts)", 2, 8, 3)
-    
-    with col_c2:
-        st.markdown("**Plate Geometry**")
-        plate_t_mm = st.selectbox("Plate Thickness (mm)", [6, 9, 12, 16, 19, 25], index=1)
-        # Material Properties
-        Fy_plate = 2500 # ksc (SS400)
-        Fu_plate = 4100 # ksc (SS400)
-        E70XX = 4900 # ksc (Weld Electrode Strength)
+    # --- LEFT COLUMN: INPUTS ---
+    with col_ui:
+        st.info("🛠️ **Configuration**")
         
-    # Auto-Geometry Logic
-    d_b_mm = float(bolt_size.replace("M",""))
-    std_pitch = int(3 * d_b_mm)
-    std_edge = int(1.5 * d_b_mm) # Vertical edge (Lev)
-    std_leh = int(1.5 * d_b_mm)  # Horizontal edge (Leh) to beam end
-    
-    with col_c3:
-        st.markdown("**Dimensions (mm)**")
-        pitch = st.number_input("Pitch (s)", value=std_pitch, step=5, help="Vertical spacing")
-        lev = st.number_input("Vertical Edge (Lev)", value=std_edge, step=5, help="Edge to top/bottom of plate")
-        leh = st.number_input("Horiz. Edge (Leh)", value=35, step=5, help="Center of hole to Plate Weld Line")
-        weld_size = st.selectbox("Weld Size (mm)", [4, 5, 6, 8, 10, 12], index=1)
+        # A. Bolt Settings
+        st.markdown("**Bolt Spec**")
+        bolt_grade = st.selectbox("Grade", ["A325N", "A307"], index=0)
+        bolt_size = st.selectbox("Size", ["M12", "M16", "M20", "M22", "M24", "M30"], index=2)
+        n_rows = st.slider("Rows", 2, 8, 3)
+        
+        # B. Plate Settings
+        st.markdown("**Plate Spec (SS400)**")
+        plate_t_mm = st.selectbox("Thickness (mm)", [6, 9, 12, 16, 19, 25], index=1)
+        weld_size = st.selectbox("Weld Leg (mm)", [4, 5, 6, 8, 10, 12], index=1)
+        
+        # C. Geometry (Smart Defaults)
+        st.markdown("**Geometry (mm)**")
+        d_b_mm = float(bolt_size.replace("M",""))
+        
+        # Validate Inputs
+        min_pitch = int(2.66 * d_b_mm)
+        rec_pitch = int(3 * d_b_mm)
+        pitch = st.number_input("Pitch (s)", value=rec_pitch, min_value=min_pitch, step=5, help="ระยะห่างระหว่างน็อต")
+        
+        min_le = int(d_b_mm + 5) # Rough approx for table J3.4
+        lev = st.number_input("V-Edge (Lev)", value=int(1.5*d_b_mm), min_value=min_le, step=5, help="ระยะขอบแนวตั้ง")
+        leh = st.number_input("H-Edge (Leh)", value=40, min_value=30, step=5, help="ระยะจากรูเจาะถึงแนวเชื่อม")
 
-    # --- CONSTANTS & CONVERSIONS ---
-    d_b = d_b_mm / 10
-    h_hole = (d_b_mm + 2) / 10 # Standard hole
-    s = pitch / 10
-    Lev = lev / 10
-    Leh = leh / 10
-    tp = plate_t_mm / 10
-    tw = props.get('tw', props.get('t1', 0.6)) / 10
+    # --- CALCULATION ENGINE ---
+    # Conversions
+    d_b = d_b_mm / 10; h_hole = (d_b_mm + 2)/10
+    tp = plate_t_mm / 10; tw = props.get('tw', props.get('t1', 0.6)) / 10
+    Fy_pl = 2500; Fu_pl = 4100; E70 = 4900
     
-    # Plate Dimensions
-    plate_h = (2 * Lev) + ((n_rows - 1) * s)
-    plate_w = Leh + 1.5 # Assume 1.5cm clearance from beam end
+    # Dimensions
+    plate_h_mm = (2 * lev) + ((n_rows - 1) * pitch)
+    plate_h = plate_h_mm / 10
+    plate_w_mm = leh + 15 # Gap 15mm
     
-    # --- CALCULATION ENGINE (AISC 360-16) ---
-    
-    # Factor Setup
+    # Safety Factors (ASD/LRFD)
     if method == "ASD":
-        Om = 2.00; Om_y = 1.50; Om_w = 2.00
-        def get_Rn(Rn, type="normal"): 
-            if type=="yield": return Rn/Om_y
-            return Rn/Om
-    else: # LRFD
-        Ph = 0.75; Ph_y = 1.00; Ph_w = 0.75
-        def get_Rn(Rn, type="normal"):
-            if type=="yield": return Ph_y*Rn
-            return Ph*Rn
+        Om = 2.00; Om_y = 1.50
+        def get_design(Rn, type="normal"): return Rn/Om_y if type=="yield" else Rn/Om
+    else:
+        Ph = 0.75; Ph_y = 1.00
+        def get_design(Rn, type="normal"): return Ph_y*Rn if type=="yield" else Ph*Rn
 
-    results = {}
-
-    # 1. Bolt Shear (J3.6)
-    Ab = (np.pi * d_b**2) / 4
+    # 1. Bolt Shear
+    Ab = (np.pi * d_b**2)/4
     Fnv = 3720 if "A325" in bolt_grade else 1880
-    Rn_shear = n_rows * Fnv * Ab
-    results["Bolt Shear"] = get_Rn(Rn_shear)
-
-    # 2. Bearing & Tearout (J3.10) - Detailed
-    # Check Plate Only (Usually Critical for Shear Tab)
-    # Edge Bolt
-    Lc_edge = Lev - (h_hole/2)
-    Rn_edge = min(1.2 * Lc_edge * tp * Fu_plate, 2.4 * d_b * tp * Fu_plate)
-    # Inner Bolts
-    if n_rows > 1:
-        Lc_inner = s - h_hole
-        Rn_inner = min(1.2 * Lc_inner * tp * Fu_plate, 2.4 * d_b * tp * Fu_plate) * (n_rows - 1)
-    else: Rn_inner = 0
-    results["Bearing (Plate)"] = get_Rn(Rn_edge + Rn_inner)
-
-    # 3. Plate Shear Yielding (J4.2)
+    Rc_shear = get_design(n_rows * Fnv * Ab)
+    
+    # 2. Bearing (Tearout)
+    Lc_edge = (lev/10) - (h_hole/2)
+    Lc_inner = (pitch/10) - h_hole
+    Rn_bear_edge = min(1.2*Lc_edge*tp*Fu_pl, 2.4*d_b*tp*Fu_pl)
+    Rn_bear_inner = min(1.2*Lc_inner*tp*Fu_pl, 2.4*d_b*tp*Fu_pl) * (n_rows-1)
+    Rc_bearing = get_design(Rn_bear_edge + Rn_bear_inner)
+    
+    # 3. Plate Checks
     Agv = plate_h * tp
-    Rn_yield = 0.6 * Fy_plate * Agv
-    results["Plate Yielding"] = get_Rn(Rn_yield, "yield")
-
-    # 4. Plate Shear Rupture (J4.2)
     Anv = (plate_h - (n_rows * h_hole)) * tp
-    Rn_rup = 0.6 * Fu_plate * Anv
-    results["Plate Rupture"] = get_Rn(Rn_rup)
-
-    # 5. Block Shear (J4.3) - The "Pro" Check
-    # Failure Path: Vertical Shear line along bolts + Horizontal Tension line to edge
-    A_gv = (Lev + (n_rows - 1) * s) * tp  # Gross Shear Area
-    A_nv = A_gv - ((n_rows - 0.5) * h_hole * tp) # Net Shear Area
-    A_nt = (Leh - (h_hole/2)) * tp # Net Tension Area
+    Rc_yield = get_design(0.6 * Fy_pl * Agv, "yield")
+    Rc_rupture = get_design(0.6 * Fu_pl * Anv)
     
-    Ubs = 1.0 # Uniform tension stress
-    # Formula: Rn = min( 0.6FuAnv + UbsFuAnt , 0.6FyAgv + UbsFuAnt )
-    R1 = (0.6 * Fu_plate * A_nv) + (Ubs * Fu_plate * A_nt)
-    R2 = (0.6 * Fy_plate * Agv) + (Ubs * Fu_plate * A_nt) # Note: Code usually implies shear yield check separately
-    # AISC 360-16 Eq J4-5:
-    Rn_block = min(R1, (0.6 * Fy_plate * A_gv) + (Ubs * Fu_plate * A_nt))
-    results["Block Shear"] = get_Rn(Rn_block)
-
-    # 6. Weld Strength (J2.4)
-    # Double Fillet Weld (Both sides of plate to support)
-    w_size_cm = weld_size / 10
-    Fw = 0.60 * E70XX
-    # Effective throat = 0.707 * w
-    Rn_weld_per_cm = 0.707 * w_size_cm * Fw * 2 # x2 for double side
-    # Length of weld = Plate Height (L)
-    Rn_weld_total = Rn_weld_per_cm * plate_h
-    results["Weld Strength"] = get_Rn(Rn_weld_total)
-
-    # --- DISPLAY RESULTS ---
-    st.markdown("---")
+    # 4. Block Shear
+    Ant = ((leh/10) - (h_hole/2)) * tp
+    # Assume L-shape tearout pattern (Standard Shear Tab)
+    # Tension area is horizontal to edge
+    R_block_1 = (0.6*Fu_pl*Anv) + (1.0*Fu_pl*Ant)
+    R_block_2 = (0.6*Fy_pl*Agv) + (1.0*Fu_pl*Ant)
+    Rc_block = get_design(min(R_block_1, R_block_2))
     
-    # Layout: Left = Drawing, Right = Checks
-    c_res1, c_res2 = st.columns([1.2, 1])
+    # 5. Weld (Double Fillet)
+    Rn_weld = 0.707 * (weld_size/10) * (0.6*E70) * 2 * plate_h
+    Rc_weld = get_design(Rn_weld)
     
-    with c_res1:
-        st.markdown("#### 📐 Connection Drawing")
-        # Generate Plot using Matplotlib
-        fig, ax = plt.subplots(figsize=(4, 6))
+    # --- SUMMARY ---
+    checks = {
+        "Bolt Shear": Rc_shear, "Bearing": Rc_bearing, 
+        "Plate Yield": Rc_yield, "Plate Rupture": Rc_rupture,
+        "Block Shear": Rc_block, "Weld Strength": Rc_weld
+    }
+    max_util = 0
+    ctrl_mode = ""
+    
+    # --- RIGHT COLUMN: VISUALIZATION & DASHBOARD ---
+    with col_viz:
+        # --- TAB INTERFACE ---
+        tab_draw, tab_detail = st.tabs(["📐 CAD Drawing", "📋 Engineering Report"])
         
-        # 1. Draw Plate (Rectangle)
-        # Origin (0,0) at bottom-left of plate attached to support
-        rect = patches.Rectangle((0, 0), Leh*10 + 20, plate_h*10, linewidth=2, edgecolor='#333', facecolor='#eee')
-        ax.add_patch(rect)
-        
-        # 2. Draw Weld Line (at x=0)
-        ax.plot([0, 0], [0, plate_h*10], color='red', linewidth=4, linestyle='--', label='Weld')
-        
-        # 3. Draw Bolts
-        # First bolt position: x = Leh, y = Lev
-        bolt_x = Leh * 10
-        for i in range(n_rows):
-            bolt_y = (Lev * 10) + (i * s * 10)
-            circle = patches.Circle((bolt_x, bolt_y), radius=(d_b_mm/2), color='#0055aa')
-            ax.add_patch(circle)
-            # Add crosshair
-            ax.plot([bolt_x-2, bolt_x+2], [bolt_y, bolt_y], 'w-', lw=1)
-            ax.plot([bolt_x, bolt_x], [bolt_y-2, bolt_y+2], 'w-', lw=1)
-            
-        # 4. Dimensions Annotation
-        # Pitch
-        if n_rows > 1:
-            ax.annotate(f"Pitch {pitch}mm", xy=(bolt_x+10, (Lev*10) + (s*10)/2), color='blue', fontsize=8)
-        # Edge
-        ax.annotate(f"Leh {leh}mm", xy=(bolt_x/2, -5), color='green', fontsize=8, ha='center')
-        ax.annotate(f"Lev {lev}mm", xy=(bolt_x+15, Lev*10), color='green', fontsize=8)
+        with tab_draw:
+            # 1. Create Plotly Figure
+            fig = go.Figure()
 
-        # Settings
-        ax.set_xlim(-10, Leh*10 + 50)
-        ax.set_ylim(-20, plate_h*10 + 20)
-        ax.set_aspect('equal')
-        ax.axis('off')
-        ax.set_title(f"Shear Tab: PL-{plate_t_mm}mm x {int(plate_h*10)}mm", fontsize=10)
-        st.pyplot(fig)
-
-    with c_res2:
-        st.markdown(f"#### 📊 Demand: **{V_u:,.0f} kg**")
-        
-        # Determine Status
-        df_res = pd.DataFrame({
-            "Check Item": list(results.keys()),
-            "Capacity (kg)": list(results.values())
-        })
-        df_res['Ratio'] = V_u / df_res['Capacity (kg)']
-        df_res['Status'] = df_res['Ratio'].apply(lambda x: "✅" if x <= 1.0 else "❌")
-        
-        # Display as a clean table
-        st.dataframe(
-            df_res.style.format({"Capacity (kg)": "{:,.0f}", "Ratio": "{:.2f}"})
-            .applymap(lambda v: 'color: red; font-weight: bold;' if isinstance(v, float) and v > 1.0 else None, subset=['Ratio']),
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # Critical Message
-        max_ratio = df_res['Ratio'].max()
-        if max_ratio <= 1.0:
-            st.success(f"**ALL PASSED** (Max Ratio: {max_ratio:.2f})")
-        else:
-            fail_item = df_res.loc[df_res['Ratio'].idxmax(), 'Check Item']
-            st.error(f"**FAILED** at '{fail_item}' (Ratio: {max_ratio:.2f})")
+            # Colors
+            steel_color = '#E5E7EB' # Light Gray
+            plate_color = '#93C5FD' # Light Blue
+            bolt_color = '#1E3A8A'  # Dark Blue
             
-            # Smart Recommendations
-            if "Weld" in fail_item: st.info("💡 Solution: Increase weld size or plate height.")
-            if "Block Shear" in fail_item: st.info("💡 Solution: Increase spacing (pitch) or horizontal edge distance (Leh).")
-            if "Bearing" in fail_item: st.info("💡 Solution: Increase Plate Thickness or Edge Distance.")
-
-    # --- EXPANDER: THE "ENGINEER'S NOTE" (BLOCK SHEAR EXPLAINED) ---
-    with st.expander("📘 Engineering Calculation Note (Block Shear & Weld)"):
-        st.markdown("### 1. Block Shear Rupture (AISC J4.3)")
-        st.write("การวิบัติแบบฉีกขาดเป็นรูปตัว L หรือ U (Tension + Shear failure path)")
-        st.latex(r"R_n = \min(0.6F_u A_{nv} + U_{bs}F_u A_{nt}, \quad 0.6F_y A_{gv} + U_{bs}F_u A_{nt})")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"**Shear Plane (Vertical):**")
-            st.write(f"- Gross Area ($A_{{gv}}$): {A_gv:.2f} cm²")
-            st.write(f"- Net Area ($A_{{nv}}$): {A_nv:.2f} cm²")
-        with c2:
-            st.markdown(f"**Tension Plane (Horizontal):**")
-            st.write(f"- Net Area ($A_{{nt}}$): {A_nt:.2f} cm²")
-            st.write(f"- $U_{{bs}}$: 1.0")
+            # Draw Beam Web (Background)
+            fig.add_shape(type="rect",
+                x0=-50, y0=-20, x1=plate_w_mm+50, y1=plate_h_mm+50,
+                fillcolor="#f0f2f6", line=dict(color="white"), layer="below"
+            )
             
-        st.markdown(f"**Result:** $R_n$ (Block Shear) = {Rn_block:,.0f} kg")
-        st.markdown("---")
-        
-        st.markdown("### 2. Weld Design (AISC J2.4)")
-        st.latex(r"R_n = 0.707 w F_w L_{weld}")
-        st.write(f"- Weld Size ($w$): {weld_size} mm (E70XX)")
-        st.write(f"- Total Length ($L$): {plate_h*10:.0f} mm (Double Sided)")
-        st.write(f"- **Capacity:** {Rn_weld_total:,.0f} kg")
+            # Draw Connection Plate
+            # Origin (0,0) is at the weld line bottom
+            fig.add_shape(type="rect",
+                x0=0, y0=0, x1=leh+15, y1=plate_h_mm,
+                fillcolor=plate_color, line=dict(color="black", width=2),
+                opacity=0.8
+            )
+            
+            # Draw Weld (Zigzag Approx)
+            weld_y = np.linspace(0, plate_h_mm, 20)
+            weld_x = np.sin(weld_y * 0.5) * 2
+            fig.add_trace(go.Scatter(x=weld_x, y=weld_y, mode='lines', 
+                                     line=dict(color='red', width=3), name='Fillet Weld'))
+
+            # Draw Bolts
+            bolt_x_coords = []
+            bolt_y_coords = []
+            
+            bx = leh # X pos of bolt line
+            for i in range(n_rows):
+                by = lev + (i * pitch)
+                bolt_x_coords.append(bx)
+                bolt_y_coords.append(by)
+                
+                # Bolt Circle
+                fig.add_shape(type="circle",
+                    x0=bx-(d_b_mm/2), y0=by-(d_b_mm/2),
+                    x1=bx+(d_b_mm/2), y1=by+(d_b_mm/2),
+                    fillcolor=bolt_color, line_color="black"
+                )
+                
+                # Crosshair
+                fig.add_trace(go.Scatter(
+                    x=[bx-3, bx+3, None, bx, bx], 
+                    y=[by, by, None, by-3, by+3],
+                    mode='lines', line=dict(color='white', width=1), showlegend=False
+                ))
+
+            # Add Dimensions (Annotations)
+            # Pitch
+            if n_rows > 1:
+                fig.add_annotation(x=bx+10, y=lev + pitch/2, text=f"s={pitch}", showarrow=False, font=dict(color="blue", size=10))
+            
+            # Plate Size
+            fig.add_annotation(x=leh/2, y=plate_h_mm+10, text=f"PL-{plate_t_mm}x{int(plate_w_mm)}x{int(plate_h_mm)}", showarrow=False, font=dict(size=12, color="black"))
+
+            # Layout Settings
+            fig.update_layout(
+                title=dict(text="Real-scale Connection Detail", font=dict(size=14)),
+                xaxis=dict(range=[-20, leh+40], showgrid=False, zeroline=False, visible=False),
+                yaxis=dict(range=[-20, plate_h_mm+30], showgrid=False, zeroline=False, visible=False, scaleanchor="x", scaleratio=1),
+                height=450,
+                margin=dict(l=10, r=10, t=40, b=10),
+                plot_bgcolor="white"
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # --- FABRICATION CHECKS ---
+            st.markdown("##### 👷 Fabrication Checks")
+            fc1, fc2, fc3 = st.columns(3)
+            
+            # Check 1: Wrench Clearance (Approx 2d)
+            clearance = pitch - d_b_mm
+            req_clearance = 2.0 * d_b_mm # Approximate for impact wrench
+            if pitch >= 3*d_b_mm: fc1.success("✅ Pitch OK")
+            else: fc1.warning(f"⚠️ Tight Pitch ({pitch}mm)")
+            
+            # Check 2: Edge Distance
+            if lev >= d_b_mm * 1.5: fc2.success("✅ V-Edge OK")
+            else: fc2.error("❌ Edge Risk")
+            
+            # Check 3: Weld vs Web
+            if weld_size <= tw*10: fc3.success("✅ Weld OK")
+            else: fc3.warning(f"⚠️ Large Weld ({weld_size}mm > Tw)")
+
+        # --- TAB: REPORT ---
+        with tab_detail:
+            # Result Table Construction
+            res_data = []
+            for k, cap in checks.items():
+                ratio = V_u / cap
+                status = "✅ PASS" if ratio <= 1.0 else "❌ FAIL"
+                res_data.append([k, f"{cap:,.0f}", f"{ratio:.2f}", status])
+                if ratio > max_util:
+                    max_util = ratio
+                    ctrl_mode = k
+            
+            df_res = pd.DataFrame(res_data, columns=["Check", "Capacity (kg)", "Ratio", "Status"])
+            
+            # GAUGE CHART (Overall Status)
+            fig_gauge = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = max_util * 100,
+                title = {'text': f"Max Utilization ({ctrl_mode})"},
+                gauge = {
+                    'axis': {'range': [0, 150]},
+                    'bar': {'color': "red" if max_util > 1 else "green"},
+                    'steps': [
+                        {'range': [0, 80], 'color': "#dcfce7"},
+                        {'range': [80, 100], 'color': "#fef9c3"},
+                        {'range': [100, 150], 'color': "#fee2e2"}],
+                }
+            ))
+            fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig_gauge, use_container_width=True)
+            
+            # Data Table
+            st.dataframe(df_res.style.applymap(
+                lambda v: 'color: red; font-weight: bold;' if "FAIL" in str(v) or (isinstance(v,float) and v>1) else None
+            ), use_container_width=True)
+            
+            if max_util > 1.0:
+                st.error(f"❌ **DESIGN FAILED** controlled by **{ctrl_mode}**")
+                st.markdown("**Suggestions:**")
+                if "Shear" in ctrl_mode: st.write("- Increase Bolt Diameter or Grade")
+                if "Bearing" in ctrl_mode: st.write("- Increase Plate Thickness")
+                if "Block" in ctrl_mode: st.write("- Increase Pitch or Edge Distance (Leh)")
+                if "Weld" in ctrl_mode: st.write("- Increase Weld Size or Plate Height")
+            else:
+                st.success("✅ **DESIGN PASSED** - Safe to Construct")
