@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
@@ -41,7 +42,7 @@ t1, t2, t3, t4 = st.tabs([
 with t1:
     render_tab1(c, props, method, Fy, section)
 
-# === TAB 2: Interactive Graph (UPDATED UI/UX) ===
+# === TAB 2: Interactive Graph (FIXED & IMPROVED) ===
 with t2:
     st.subheader(f"📈 Capacity Envelope Analysis: {section}")
     st.caption("กราฟแสดงขีดความสามารถในการรับน้ำหนักเทียบกับความยาวช่วงคาน (พื้นที่สีเทาคือโซนที่ปลอดภัย)")
@@ -58,6 +59,7 @@ with t2:
     
     # เส้น Capacity จริง (ค่าต่ำสุดของทั้ง 3 เส้น)
     y_gov = np.minimum(np.minimum(ys, ym), yd)
+    y_lim = max(y_gov) * 1.5 # ขอบบนสุดของกราฟ
     
     fig = go.Figure()
 
@@ -100,24 +102,22 @@ with t2:
         name='Your Design'
     ))
 
-    # 6. ตกแต่ง Layout และ Background Zones
-    y_lim = max(y_gov) * 1.5
+    # 6. ตกแต่ง Layout และ Background Zones (ใช้ Annotation แยกเพื่อป้องกัน Error)
     
-    # เพิ่มแถบสี Background แยกโซนพฤติกรรม (Shear/Moment/Deflection Zones)
     # Zone 1: Shear
-    fig.add_vrect(x0=0, x1=c['L_vm'], 
-                  fillcolor="#d9534f", opacity=0.05, layer="below", line_width=0,
-                  annotation_text="SHEAR", annotation_position="top left", annotation_font_color="#d9534f")
+    fig.add_vrect(x0=0, x1=c['L_vm'], fillcolor="#d9534f", opacity=0.05, layer="below", line_width=0)
+    fig.add_annotation(x=c['L_vm']/2, y=y_lim, text="SHEAR", showarrow=False, 
+                       yshift=-10, font=dict(color="#d9534f", weight="bold"))
     
     # Zone 2: Moment
-    fig.add_vrect(x0=c['L_vm'], x1=c['L_md'], 
-                  fillcolor="#f0ad4e", opacity=0.05, layer="below", line_width=0,
-                  annotation_text="MOMENT", annotation_position="top center", annotation_font_color="#f0ad4e")
+    fig.add_vrect(x0=c['L_vm'], x1=c['L_md'], fillcolor="#f0ad4e", opacity=0.05, layer="below", line_width=0)
+    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim, text="MOMENT", showarrow=False, 
+                       yshift=-10, font=dict(color="#f0ad4e", weight="bold"))
     
     # Zone 3: Deflection
-    fig.add_vrect(x0=c['L_md'], x1=L_max, 
-                  fillcolor="#5cb85c", opacity=0.05, layer="below", line_width=0,
-                  annotation_text="DEFLECTION", annotation_position="top right", annotation_font_color="#5cb85c")
+    fig.add_vrect(x0=c['L_md'], x1=L_max, fillcolor="#5cb85c", opacity=0.05, layer="below", line_width=0)
+    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim, text="DEFLECTION", showarrow=False, 
+                       yshift=-10, font=dict(color="#5cb85c", weight="bold"))
 
     fig.update_layout(
         title=dict(text=f"Structural Capacity Envelope: {section}", font=dict(size=20)),
