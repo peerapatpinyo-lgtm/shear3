@@ -7,8 +7,10 @@ import numpy as np
 
 def make_cuboid(center, size, color, name, opacity=1.0):
     """สร้างกล่องสี่เหลี่ยม"""
+    # Auto-convert inputs to simple variables
     x, y, z = center
     dx, dy, dz = size
+    
     return go.Mesh3d(
         x=[x-dx/2, x-dx/2, x+dx/2, x+dx/2, x-dx/2, x-dx/2, x+dx/2, x+dx/2],
         y=[y-dy/2, y+dy/2, y+dy/2, y-dy/2, y-dy/2, y+dy/2, y+dy/2, y-dy/2],
@@ -22,6 +24,10 @@ def make_cuboid(center, size, color, name, opacity=1.0):
 
 def make_cylinder(p1, p2, r, color, name="Cylinder"):
     """สร้างทรงกระบอก"""
+    # 🛠️ FIX: Force convert to numpy array to avoid List Math Error
+    p1 = np.array(p1, dtype=float)
+    p2 = np.array(p2, dtype=float)
+    
     v = p2 - p1
     mag = np.linalg.norm(v)
     if mag == 0: return go.Mesh3d()
@@ -54,6 +60,10 @@ def make_cylinder(p1, p2, r, color, name="Cylinder"):
 
 def make_hex_prism(center, normal, width, thick, color, name="Hex"):
     """สร้างปริซึมหกเหลี่ยม"""
+    # 🛠️ FIX: Force convert inputs
+    center = np.array(center, dtype=float)
+    normal = np.array(normal, dtype=float)
+    
     v = normal / np.linalg.norm(normal)
     not_v = np.array([0, 1, 0]) if np.abs(v[1]) < 0.9 else np.array([1, 0, 0])
     n1 = np.cross(v, not_v); n1 /= np.linalg.norm(n1)
@@ -87,9 +97,17 @@ def make_hex_prism(center, normal, width, thick, color, name="Hex"):
 
 def add_dim_line(fig, p1, p2, text, color="black", offset_z=0, offset_vec=None):
     """วาดเส้นบอกระยะ"""
+    # 🛠️ FIX: Main Error Source - Force convert lists to arrays
+    p1 = np.array(p1, dtype=float)
+    p2 = np.array(p2, dtype=float)
+    
     mid = (p1 + p2) / 2
+    
     if offset_vec is not None:
-        p1 = p1 + offset_vec; p2 = p2 + offset_vec; mid = mid + offset_vec
+        ov = np.array(offset_vec, dtype=float)
+        p1 = p1 + ov
+        p2 = p2 + ov
+        mid = mid + ov
     
     fig.add_trace(go.Scatter3d(
         x=[p1[0], p2[0]], y=[p1[1], p2[1]], z=[p1[2]+offset_z, p2[2]+offset_z],
@@ -106,6 +124,10 @@ def add_dim_line(fig, p1, p2, text, color="black", offset_z=0, offset_vec=None):
 # 2. REAL BOLT BUILDER
 # ==========================================
 def add_real_bolt(fig, center, axis_vec, dia, grip_length):
+    # Ensure numpy arrays
+    center = np.array(center, dtype=float)
+    axis_vec = np.array(axis_vec, dtype=float)
+    
     head_w = dia * 1.6; head_h = dia * 0.65; nut_h = dia * 0.85
     washer_t = 3.0; washer_d = dia * 2.1; stick_out = dia * 0.5 
     total_shank_len = grip_length + washer_t + nut_h + stick_out
@@ -131,21 +153,19 @@ def create_connection_figure(beam_dims, plate_dims, bolt_dims, config):
     
     fig = go.Figure()
 
-    # --- 0. SUPPORT COLUMN (THE WALL) --- 🏛️
-    # Position: Y = -setback (Behind the beam start)
+    # --- 0. SUPPORT COLUMN (THE WALL) ---
     col_thick = 20
     col_face_loc = -setback
     col_center_y = col_face_loc - (col_thick / 2)
     
     # Draw huge vertical plate (Column Flange)
     fig.add_trace(make_cuboid(
-        [0, col_center_y, 0],       # Pos
-        [B*2.5, col_thick, H*2.0],  # Size (Wider/Taller than beam)
+        [0, col_center_y, 0],       
+        [B*2.5, col_thick, H*2.0],  
         '#bdc3c7', "Support Column", opacity=0.6
     ))
 
     # --- A. BEAM ---
-    # Starts at Y=0, goes to Y=L
     beam_cy = L_beam / 2
     web_h = H - (2 * Tf)
     fig.add_trace(make_cuboid([0, beam_cy, 0], [Tw, L_beam, web_h], '#95a5a6', "Web"))
@@ -154,29 +174,25 @@ def create_connection_figure(beam_dims, plate_dims, bolt_dims, config):
     fig.add_trace(make_cuboid([0, beam_cy, -z_flange], [B, L_beam, Tf], '#7f8c8d', "Bot Flange"))
 
     # --- B. SHEAR PLATE ---
-    # Attached to Support Face (Y = -setback)
-    # Extends into Beam
     pl_y_center = -setback + (pl_w / 2)
     pl_x_center = (Tw/2) + (pl_t/2)
     
-    # Calculate Vertical Center based on Bolts
     z_top_bolt = ((n_rows - 1) * pitch) / 2
     z_pl_top = z_top_bolt + lev
     z_pl_center = z_pl_top - (pl_h / 2)
     
     fig.add_trace(make_cuboid([pl_x_center, pl_y_center, z_pl_center], [pl_t, pl_w, pl_h], '#f1c40f', "Shear Plate"))
 
-    # --- C. WELD (DOUBLE FILLET) --- 🔥
-    # Weld connects Plate to Column Face at Y = -setback
-    weld_y = -setback + (weld_sz/2) # Slightly into the connection side
+    # --- C. WELD (DOUBLE FILLET) ---
+    weld_y = -setback + (weld_sz/2) 
     weld_x_base = (Tw/2) 
     
-    # Side 1 (Right of Plate)
+    # Side 1
     fig.add_trace(make_cuboid(
         [weld_x_base + pl_t + weld_sz/2, weld_y, z_pl_center], 
         [weld_sz, weld_sz, pl_h], '#e67e22', "Weld R"
     ))
-    # Side 2 (Left of Plate / Inside gap) - Optional but good for detail
+    # Side 2
     fig.add_trace(make_cuboid(
         [weld_x_base - weld_sz/2, weld_y, z_pl_center], 
         [weld_sz, weld_sz, pl_h], '#e67e22', "Weld L"
@@ -185,11 +201,11 @@ def create_connection_figure(beam_dims, plate_dims, bolt_dims, config):
     # --- D. BOLTS ---
     grip = Tw + pl_t
     bolt_start_x = -Tw/2 
-    bolt_y = leh_beam # Relative to Beam Start (0)
+    bolt_y = leh_beam
     
     for i in range(n_rows):
         bz = z_top_bolt - (i * pitch)
-        add_real_bolt(fig, np.array([bolt_start_x, bolt_y, bz]), np.array([1, 0, 0]), d_b, grip)
+        add_real_bolt(fig, [bolt_start_x, bolt_y, bz], [1, 0, 0], d_b, grip)
 
     # --- E. DIMS ---
     # Lev
