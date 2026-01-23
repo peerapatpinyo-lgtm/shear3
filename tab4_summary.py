@@ -3,7 +3,7 @@ import pandas as pd
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
-# [UPDATE] เพิ่มตัวแปร def_limit ในบรรทัดนี้
+# [UPDATE] รับค่า def_limit เข้ามาด้วย
 def render_tab4(method, Fy, E_gpa, def_limit):
     """
     Tab 4: Master Summary Table
@@ -11,7 +11,7 @@ def render_tab4(method, Fy, E_gpa, def_limit):
     """
     st.markdown(f"### 📋 Master Catalog: Section Comparison ({method})")
     
-    # แสดงค่า Limit ปัจจุบันเพื่อให้ User มั่นใจว่าเปลี่ยนแล้ว
+    # แสดงค่า Limit ปัจจุบัน
     st.info(f"ℹ️ Current Criteria: Deflection Limit = **L/{def_limit}**")
 
     # --- Comparison Settings ---
@@ -32,7 +32,6 @@ def render_tab4(method, Fy, E_gpa, def_limit):
         props = SYS_H_BEAMS[section_name]
         
         # [IMPORTANT] ส่ง def_limit เข้าไปคำนวณหา Critical Lengths ใหม่
-        # L_md (จุดเปลี่ยน Moment/Deflection) จะเปลี่ยนไปตามค่า def_limit
         c_const = core_calculation(10.0, Fy, E_gpa, props, method, def_limit)
         L_vm = c_const['L_vm']
         L_md = c_const['L_md']
@@ -52,8 +51,8 @@ def render_tab4(method, Fy, E_gpa, def_limit):
         data.append({
             "Section": section_name,
             "Weight": props['W'],
-            "L_Shear_End": L_vm,   # เก็บค่าตัวเลขไว้ sort ได้
-            "L_Deflect_Start": L_md, # เก็บค่าตัวเลขไว้ sort ได้
+            "L_Shear_End": L_vm,  
+            "L_Deflect_Start": L_md,
             
             # Display Strings
             "Shear Zone": f"0 - {L_vm:.2f} m",
@@ -83,7 +82,6 @@ def render_tab4(method, Fy, E_gpa, def_limit):
             "Section": st.column_config.TextColumn("Section", width="small"),
             "Weight": st.column_config.NumberColumn("Wt (kg/m)", format="%.1f"),
             
-            # Critical Zones (แสดงผลตามค่า Deflection Limit ใหม่)
             "Shear Zone": st.column_config.TextColumn("🔴 Shear Zone", width="small"),
             "Moment Zone": st.column_config.TextColumn("🟠 Moment Zone", width="small"),
             "Deflect Zone": st.column_config.TextColumn("🟢 Deflect Zone", width="small", help=f"Starts when Deflection > L/{def_limit}"),
