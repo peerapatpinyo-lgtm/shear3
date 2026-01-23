@@ -3,9 +3,12 @@ import numpy as np
 import plotly.graph_objects as go
 from database import SYS_H_BEAMS
 from calculator import core_calculation
+
+# Import Modules
+# ตรวจสอบชื่อไฟล์ให้ตรงกับที่คุณบันทึกไว้ (เช่น tab4_details.py หรือ tab4_summary.py)
 from tab1_details import render_tab1
 from tab3_capacity import render_tab3
-from tab4_summary import render_tab4 
+from tab4_details import render_tab4  # ผมใช้ชื่อ tab4_details ตามโค้ดล่าสุดที่ให้ไป
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -162,4 +165,5 @@ with t3:
 
 # === TAB 4: Master Catalog ===
 with t4:
-    render_tab4(method, Fy, E_gpa)
+    # [FIXED] เพิ่ม def_val เข้าไป เพื่อให้ Tab 4 อัปเดตตาม Dropdown
+    render_tab4(method, Fy, E_gpa, def_val)
