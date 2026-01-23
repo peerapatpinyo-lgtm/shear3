@@ -35,7 +35,8 @@ with st.sidebar:
 
 # --- Process (Single Section) ---
 props = SYS_H_BEAMS[section]
-# ส่ง def_val เข้าไปคำนวณด้วย
+
+# [CRITICAL] ส่ง def_val เข้าไปคำนวณด้วย เพื่อให้ได้ค่า L_md ที่ถูกต้องตาม Limit
 c = core_calculation(L_input, Fy, E_gpa, props, method, def_val)
 final_w = min(c['ws'], c['wm'], c['wd'])
 
@@ -57,25 +58,29 @@ with t2:
     st.caption(f"กราฟแสดงขีดความสามารถรับน้ำหนัก (Deflection Limit: **L/{def_val}**)")
 
     # 1. เตรียมข้อมูลสำหรับ Plot
+    # กำหนดแกน X ให้ยาวพอที่จะเห็นจุดเปลี่ยนทั้งหมด
     L_max = max(15, c['L_md']*1.2, L_input*1.5)
     x = np.linspace(0.5, L_max, 400)
     
-    # คำนวณเส้น Limit ต่างๆ
-    ys = (2 * c['V_des'] / (x*100)) * 100  # Shear Curve
-    ym = (8 * c['M_des'] / (x*100)**2) * 100 # Moment Curve
+    # 2. คำนวณเส้น Limit ต่างๆ (สูตรต้องตรงกับ calculator.py)
+    # Shear: w = 2*V_des / L
+    ys = (2 * c['V_des'] / (x*100)) * 100 
     
-    # [FIXED] Deflection Curve สูตรไดนามิกตาม def_val ที่เลือก
-    # สูตร: w = (384 EI) / (5 * Ratio * L^3)
+    # Moment: w = 8*M_des / L^2
+    ym = (8 * c['M_des'] / (x*100)**2) * 100 
+    
+    # Deflection: w = (384 EI) / (5 * Limit * L^3)
+    # k_def คือค่าคงที่ (384 EI / 5 Limit)
     k_def = (384 * c['E_ksc'] * props['Ix']) / (5 * def_val)
     yd = (k_def / (x*100)**3) * 100
     
-    # เส้น Capacity จริง (ค่าต่ำสุดของทั้ง 3 เส้น)
+    # เส้น Capacity จริง (ค่าต่ำสุดของทั้ง 3 เส้น ณ จุดนั้นๆ)
     y_gov = np.minimum(np.minimum(ys, ym), yd)
-    y_lim = max(y_gov) * 1.5 # ขอบบนสุดของกราฟ
+    y_lim = max(y_gov) * 1.5 # ตั้งค่าแกน Y สูงสุดเผื่อไว้ 1.5 เท่า
     
     fig = go.Figure()
 
-    # 2. เพิ่มพื้นที่เงา (Safe Zone Fill)
+    # 3. เพิ่มพื้นที่เงา (Safe Zone Fill)
     fig.add_trace(go.Scatter(
         x=x, y=y_gov,
         fill='tozeroy',
@@ -86,17 +91,22 @@ with t2:
         name='Safe Zone'
     ))
 
-    # 3. เส้น Limit แต่ละประเภท (เส้นประ)
+    # 4. วาดเส้น Limit แต่ละประเภท (เส้นประ)
     line_styles = dict(width=2, dash='dash')
     
-    fig.add_trace(go.Scatter(x=x, y=ys, name='Shear Limit', line=dict(color='#d9534f', **line_styles),
+    fig.add_trace(go.Scatter(x=x, y=ys, name='Shear Limit', 
+                             line=dict(color='#d9534f', **line_styles),
                              hovertemplate="Shear Limit: %{y:,.0f} kg/m<extra></extra>"))
-    fig.add_trace(go.Scatter(x=x, y=ym, name='Moment Limit', line=dict(color='#f0ad4e', **line_styles),
+                             
+    fig.add_trace(go.Scatter(x=x, y=ym, name='Moment Limit', 
+                             line=dict(color='#f0ad4e', **line_styles),
                              hovertemplate="Moment Limit: %{y:,.0f} kg/m<extra></extra>"))
-    fig.add_trace(go.Scatter(x=x, y=yd, name=f'Deflection (L/{def_val})', line=dict(color='#5cb85c', **line_styles),
+                             
+    fig.add_trace(go.Scatter(x=x, y=yd, name=f'Deflection (L/{def_val})', 
+                             line=dict(color='#5cb85c', **line_styles),
                              hovertemplate="Deflection Limit: %{y:,.0f} kg/m<extra></extra>"))
 
-    # 4. เส้นขอบความสามารถสูงสุด (Governing Capacity - เส้นทึบดำ)
+    # 5. เส้นขอบความสามารถสูงสุด (Governing Capacity - เส้นทึบดำ)
     fig.add_trace(go.Scatter(
         x=x, y=y_gov, 
         name='Governing Capacity', 
@@ -104,7 +114,7 @@ with t2:
         hovertemplate="<b>Governing Capacity</b><br>Span: %{x:.2f} m<br>Load: %{y:,.0f} kg/m<extra></extra>"
     ))
 
-    # 5. จุดที่ User เลือก (Your Design)
+    # 6. จุดที่ User เลือก (Your Design)
     fig.add_trace(go.Scatter(
         x=[L_input], y=[final_w],
         mode='markers+text',
@@ -114,23 +124,23 @@ with t2:
         name='Your Design'
     ))
 
-    # 6. Background Zones (ปรับปรุงให้ไม่ Error และตรงกับค่าที่คำนวณมา)
-    # L_vm และ L_md ถูกคำนวณมาจาก calculator.py โดยใช้ def_val ที่ถูกต้องแล้ว
+    # 7. Background Zones (Dynamic ตาม def_val)
+    # ค่า L_vm และ L_md มาจาก core_calculation ที่คำนวณด้วย def_val แล้ว
     
     # Zone 1: Shear
     fig.add_vrect(x0=0, x1=c['L_vm'], fillcolor="#d9534f", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=c['L_vm']/2, y=y_lim, text="SHEAR", showarrow=False, 
-                       yshift=-10, font=dict(color="#d9534f", weight="bold"))
+    fig.add_annotation(x=c['L_vm']/2, y=y_lim*0.9, text="SHEAR", showarrow=False, 
+                       font=dict(color="#d9534f", weight="bold"))
     
     # Zone 2: Moment
     fig.add_vrect(x0=c['L_vm'], x1=c['L_md'], fillcolor="#f0ad4e", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim, text="MOMENT", showarrow=False, 
-                       yshift=-10, font=dict(color="#f0ad4e", weight="bold"))
+    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, 
+                       font=dict(color="#f0ad4e", weight="bold"))
     
     # Zone 3: Deflection
     fig.add_vrect(x0=c['L_md'], x1=L_max, fillcolor="#5cb85c", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim, text="DEFLECTION", showarrow=False, 
-                       yshift=-10, font=dict(color="#5cb85c", weight="bold"))
+    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim*0.9, text="DEFLECTION", showarrow=False, 
+                       font=dict(color="#5cb85c", weight="bold"))
 
     fig.update_layout(
         title=dict(text=f"Structural Capacity Envelope: {section}", font=dict(size=20)),
@@ -147,7 +157,7 @@ with t2:
 
 # === TAB 3: Table ===
 with t3:
-    # ส่ง def_val ไปคำนวณตารางด้วย
+    # ส่ง def_val ไปคำนวณตารางด้วย (เพื่อให้ตารางไฮไลท์ถูก Zone)
     render_tab3(props, method, Fy, E_gpa, section, def_val)
 
 # === TAB 4: Master Catalog ===
