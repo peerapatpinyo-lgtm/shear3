@@ -5,10 +5,10 @@ from database import SYS_H_BEAMS
 from calculator import core_calculation
 
 # Import Modules
-# ตรวจสอบชื่อไฟล์ให้ตรงกับที่คุณบันทึกไว้ (เช่น tab4_details.py หรือ tab4_summary.py)
+# Ensure these filenames match your local directory (e.g., tab4_details.py or tab4_summary.py)
 from tab1_details import render_tab1
 from tab3_capacity import render_tab3
-from tab4_summary import render_tab4 # ผมใช้ชื่อ tab4_details ตามโค้ดล่าสุดที่ให้ไป
+from tab4_summary import render_tab4  # Using tab4_summary as per previous instructions
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -21,17 +21,17 @@ with st.sidebar:
     Fy = st.number_input("Fy (Yield Strength) [ksc]", value=2400)
     E_gpa = st.number_input("E (Modulus) [GPa]", value=200)
     
-    # [NEW] Deflection Limit Selection (เลือกเกณฑ์การแอ่นตัว)
+    # [NEW] Deflection Limit Selection
     st.write("---")
-    st.write("**Deflection Limit (เกณฑ์การแอ่นตัว):**")
+    st.write("**Deflection Limit:**")
     def_option = st.selectbox("Select Limit", 
                               ["L/360 (General/Floor)", "L/240 (Roof)", "L/180 (Industrial)"], 
                               index=0)
-    # แปลงข้อความให้เป็นตัวเลข (360, 240, 180)
+    # Extract numerical value (360, 240, 180)
     def_val = int(def_option.split('/')[1].split()[0])
     
     st.header("2. Single Section Analysis")
-    # เรียงลำดับหน้าตัดตามขนาด
+    # Sort sections by size (Height)
     sort_list = sorted(SYS_H_BEAMS.keys(), key=lambda x: int(x.split('x')[0].split('-')[1]))
     section = st.selectbox("Select Size to Analyze", sort_list, index=8)
     L_input = st.slider("Span Length (m)", 2.0, 30.0, 6.0, 0.5)
@@ -39,16 +39,16 @@ with st.sidebar:
 # --- Process (Single Section) ---
 props = SYS_H_BEAMS[section]
 
-# [CRITICAL] ส่ง def_val เข้าไปคำนวณด้วย เพื่อให้ได้ค่า L_md ที่ถูกต้องตาม Limit
+# [CRITICAL] Pass def_val to calculation to get correct L_md based on the limit
 c = core_calculation(L_input, Fy, E_gpa, props, method, def_val)
 final_w = min(c['ws'], c['wm'], c['wd'])
 
 # --- Display Tabs ---
 t1, t2, t3, t4 = st.tabs([
-    "📝 รายการคำนวณ (Detail)", 
-    "📊 กราฟพฤติกรรม (Graph)", 
-    "📋 ตารางรับน้ำหนัก (Table)",
-    "📚 เปรียบเทียบทุกหน้าตัด (Master Catalog)"
+    "📝 Detailed Report", 
+    "📊 Behavior Graph", 
+    "📋 Capacity Table",
+    "📚 Master Catalog"
 ])
 
 # === TAB 1: Detail Report ===
@@ -58,14 +58,14 @@ with t1:
 # === TAB 2: Interactive Graph ===
 with t2:
     st.subheader(f"📈 Capacity Envelope Analysis: {section}")
-    st.caption(f"กราฟแสดงขีดความสามารถรับน้ำหนัก (Deflection Limit: **L/{def_val}**)")
+    st.caption(f"Load Capacity Envelope (Deflection Limit: **L/{def_val}**)")
 
-    # 1. เตรียมข้อมูลสำหรับ Plot
-    # กำหนดแกน X ให้ยาวพอที่จะเห็นจุดเปลี่ยนทั้งหมด
+    # 1. Prepare Plot Data
+    # Set X-axis length to ensure all transition points are visible
     L_max = max(15, c['L_md']*1.2, L_input*1.5)
     x = np.linspace(0.5, L_max, 400)
     
-    # 2. คำนวณเส้น Limit ต่างๆ (สูตรต้องตรงกับ calculator.py)
+    # 2. Calculate Limit Lines (Formulas must match calculator.py)
     # Shear: w = 2*V_des / L
     ys = (2 * c['V_des'] / (x*100)) * 100 
     
@@ -73,28 +73,28 @@ with t2:
     ym = (8 * c['M_des'] / (x*100)**2) * 100 
     
     # Deflection: w = (384 EI) / (5 * Limit * L^3)
-    # k_def คือค่าคงที่ (384 EI / 5 Limit)
+    # k_def is constant (384 EI / 5 Limit)
     k_def = (384 * c['E_ksc'] * props['Ix']) / (5 * def_val)
     yd = (k_def / (x*100)**3) * 100
     
-    # เส้น Capacity จริง (ค่าต่ำสุดของทั้ง 3 เส้น ณ จุดนั้นๆ)
+    # Governing Capacity (Minimum of all 3 lines at any point)
     y_gov = np.minimum(np.minimum(ys, ym), yd)
-    y_lim = max(y_gov) * 1.5 # ตั้งค่าแกน Y สูงสุดเผื่อไว้ 1.5 เท่า
+    y_lim = max(y_gov) * 1.5 # Set Y-axis max limit (1.5x buffer)
     
     fig = go.Figure()
 
-    # 3. เพิ่มพื้นที่เงา (Safe Zone Fill)
+    # 3. Add Safe Zone Fill
     fig.add_trace(go.Scatter(
         x=x, y=y_gov,
         fill='tozeroy',
-        fillcolor='rgba(100, 100, 100, 0.1)', # สีเทาจางๆ
+        fillcolor='rgba(100, 100, 100, 0.1)', # Faint gray
         line=dict(color='rgba(255,255,255,0)'),
         hoverinfo='skip',
         showlegend=False,
         name='Safe Zone'
     ))
 
-    # 4. วาดเส้น Limit แต่ละประเภท (เส้นประ)
+    # 4. Draw Limit Lines (Dashed)
     line_styles = dict(width=2, dash='dash')
     
     fig.add_trace(go.Scatter(x=x, y=ys, name='Shear Limit', 
@@ -109,7 +109,7 @@ with t2:
                              line=dict(color='#5cb85c', **line_styles),
                              hovertemplate="Deflection Limit: %{y:,.0f} kg/m<extra></extra>"))
 
-    # 5. เส้นขอบความสามารถสูงสุด (Governing Capacity - เส้นทึบดำ)
+    # 5. Governing Capacity Line (Solid Black)
     fig.add_trace(go.Scatter(
         x=x, y=y_gov, 
         name='Governing Capacity', 
@@ -117,7 +117,7 @@ with t2:
         hovertemplate="<b>Governing Capacity</b><br>Span: %{x:.2f} m<br>Load: %{y:,.0f} kg/m<extra></extra>"
     ))
 
-    # 6. จุดที่ User เลือก (Your Design)
+    # 6. User Selected Point (Your Design)
     fig.add_trace(go.Scatter(
         x=[L_input], y=[final_w],
         mode='markers+text',
@@ -127,8 +127,8 @@ with t2:
         name='Your Design'
     ))
 
-    # 7. Background Zones (Dynamic ตาม def_val)
-    # ค่า L_vm และ L_md มาจาก core_calculation ที่คำนวณด้วย def_val แล้ว
+    # 7. Background Zones (Dynamic based on def_val)
+    # L_vm and L_md come from core_calculation using the current def_val
     
     # Zone 1: Shear
     fig.add_vrect(x0=0, x1=c['L_vm'], fillcolor="#d9534f", opacity=0.05, layer="below", line_width=0)
@@ -160,10 +160,10 @@ with t2:
 
 # === TAB 3: Table ===
 with t3:
-    # ส่ง def_val ไปคำนวณตารางด้วย (เพื่อให้ตารางไฮไลท์ถูก Zone)
+    # Pass def_val to ensure the table highlights the correct zone
     render_tab3(props, method, Fy, E_gpa, section, def_val)
 
 # === TAB 4: Master Catalog ===
 with t4:
-    # [FIXED] เพิ่ม def_val เข้าไป เพื่อให้ Tab 4 อัปเดตตาม Dropdown
+    # Pass def_val to ensure Tab 4 updates based on the dropdown
     render_tab4(method, Fy, E_gpa, def_val)
