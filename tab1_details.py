@@ -172,10 +172,11 @@ def render_tab1(c, props, method, Fy, section):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Setup Equation:**")
-            st.latex(r"\frac{2 V_{design}}{L} = \frac{8 M_{design}}{L^2} \Rightarrow L = \frac{4 M_{design}}{V_{design}}")
+            st.latex(r"L = \frac{4 M_{full}}{V_{design}}")
         with c2:
             st.markdown("**Substitution:**")
-            st.latex(rf"L = \frac{{4 \times {c['M_des']:,.0f}}}{{{c['V_des']:,.0f}}} = {c['L_vm']*100:,.1f} \text{{ cm}}")
+            # แก้มาใช้ M_des_full เพื่อให้ตัวเลขคงที่ตรงกับตาราง
+            st.latex(rf"L = \frac{{4 \times {c['M_des_full']:,.0f}}}{{{c['V_des']:,.0f}}} = {c['L_vm']*100:,.1f} \text{{ cm}}")
             st.success(f"= {c['L_vm']:.2f} m")
 
         st.markdown("---")
@@ -186,16 +187,13 @@ def render_tab1(c, props, method, Fy, section):
         with c3:
             st.markdown("**Setup Equation:**")
             st.write(f"Equating Moment ($w_m$) and Deflection ($w_d$) at $L/{limit_val}$:")
-            # Formula derivation:
-            # 8M/L^2 = (384 E I / 5 L^3) * (1/Limit)
-            # 8M = (384 E I / 5 L Limit)
-            # L = (384 E I) / (40 M Limit)
-            constant_denom = 40 * limit_val
-            st.latex(rf"L = \frac{{384 E I}}{{40 \times M_{{design}} \times {limit_val}}}")
+            # แก้มาใช้ M_full ในสูตร
+            st.latex(rf"L = \frac{{384 E I}}{{40 \times M_{{full}} \times {limit_val}}}")
         
         with c4:
             st.markdown("**Substitution:**")
-            denom_val = 40 * c['M_des'] * limit_val
+            # แก้มาใช้ M_des_full เพื่อให้ตัวเลขคงที่ตรงกับตาราง
+            denom_val = 40 * c['M_des_full'] * limit_val
             st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{{denom_val:,.0f}}}")
             st.latex(rf"L = {c['L_md']*100:,.1f} \text{{ cm}}")
             st.success(f"= {c['L_md']:.2f} m")
