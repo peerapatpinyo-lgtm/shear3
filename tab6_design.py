@@ -5,203 +5,137 @@ from database import SYS_H_BEAMS
 from drawer_3d import create_connection_figure
 
 # ==========================================
-# 📐 ENGINEER'S HELPER FUNCTIONS
+# 📐 HELPER: COMPATIBILITY CHECKER
 # ==========================================
-
-def check_geometry_compliance(d_b, s, lev, leh, n_rows, beam_d):
-    """ตรวจสอบข้อกำหนดระยะตาม AISC/EIT"""
-    checks = []
+def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
+    """คำนวณจำนวนแถวสูงสุดที่เป็นไปได้ในคานนี้"""
+    # พื้นที่ใช้งานจริง (T-distance)
+    workable_depth = beam_d - (2 * k_dist) 
+    # หรือเอาแบบ Safety: Web Depth - Clearances
+    available_h = beam_d - (2 * beam_tf) - margin_top - margin_bot
     
-    # 1. Pitch (s)
-    min_s = 2.67 * d_b
-    pref_s = 3.0 * d_b
-    if s < min_s:
-        checks.append({"item": "Bolt Spacing (s)", "val": f"{s} mm", "limit": f"≥ {min_s:.1f}", "status": "FAIL", "ref": "J3.3"})
-    elif s < pref_s:
-        checks.append({"item": "Bolt Spacing (s)", "val": f"{s} mm", "limit": f"≥ {pref_s:.1f}", "status": "WARN", "ref": "User Note"})
-    else:
-        checks.append({"item": "Bolt Spacing (s)", "val": f"{s} mm", "limit": f"≥ {min_s:.1f}", "status": "PASS", "ref": "J3.3"})
-
-    # 2. Edge Distance (Le)
-    # AISC Table J3.4 (Simplified logic)
-    min_le = d_b * 1.25 # Sheared edge approx
-    if lev < min_le:
-        checks.append({"item": "Vert. Edge (Lev)", "val": f"{lev} mm", "limit": f"≥ {min_le:.1f}", "status": "FAIL", "ref": "Table J3.4"})
-    else:
-        checks.append({"item": "Vert. Edge (Lev)", "val": f"{lev} mm", "limit": f"≥ {min_le:.1f}", "status": "PASS", "ref": "Table J3.4"})
-        
-    if leh < min_le:
-        checks.append({"item": "Horiz. Edge (Leh)", "val": f"{leh} mm", "limit": f"≥ {min_le:.1f}", "status": "FAIL", "ref": "Table J3.4"})
-    else:
-        checks.append({"item": "Horiz. Edge (Leh)", "val": f"{leh} mm", "limit": f"≥ {min_le:.1f}", "status": "PASS", "ref": "Table J3.4"})
-
-    # 3. Fit-up Check
-    pl_h = (2*lev) + (n_rows-1)*s
-    T_dist = beam_d - 60 # Assume k=30mm * 2
-    if pl_h > T_dist:
-        checks.append({"item": "Plate Height vs T", "val": f"{pl_h} mm", "limit": f"< {T_dist}", "status": "FAIL", "ref": "Fit-up"})
-    else:
-        checks.append({"item": "Plate Height vs T", "val": f"{pl_h} mm", "limit": f"< {T_dist}", "status": "PASS", "ref": "Fit-up"})
-
-    return pd.DataFrame(checks)
+    # คำนวณ max rows: h = 2*lev + (n-1)*s
+    # available_h >= 2*lev + (n-1)*s
+    if available_h <= (2 * lev):
+        return 0
+    max_n = int(((available_h - (2 * lev)) / pitch) + 1)
+    return max(1, max_n)
 
 # ==========================================
-# 🏗️ MAIN UI RENDERER
+# 🏗️ MAIN UI
 # ==========================================
 
 def render_tab6(method, Fy, E_gpa, def_limit):
-    # CSS Injection for Engineering Look
-    st.markdown("""
-        <style>
-        .eng-metric { border-left: 4px solid #3498db; padding-left: 10px; background: #f8f9fa; }
-        .pass-tag { color: white; background-color: #27ae60; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8em; }
-        .fail-tag { color: white; background-color: #c0392b; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8em; }
-        .warn-tag { color: black; background-color: #f1c40f; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8em; }
-        </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown("### 📐 Shear Tab Connection Design (AISC 360-16)")
-
-    # --- LAYOUT GRID ---
-    col_input, col_main = st.columns([1, 2.5])
+    st.markdown("### 🏗️ Detailed Shear Connection Design")
+    
+    col_input, col_viz = st.columns([1.2, 2.5])
 
     # ==========================================
-    # 1. INPUT PANEL (ENGINEERING CONTROLS)
+    # 🔴 1. INPUT PANEL (DEEP DETAIL)
     # ==========================================
     with col_input:
-        with st.expander("🔹 1. Member & Load", expanded=True):
-            sec_name = st.selectbox("Beam Section", list(SYS_H_BEAMS.keys()))
+        
+        # --- A. HOST BEAM ---
+        with st.expander("1️⃣ Host Beam & Load", expanded=True):
+            sec_name = st.selectbox("Section", list(SYS_H_BEAMS.keys()))
             beam = SYS_H_BEAMS[sec_name]
             
-            # Unit standardization
+            # Unit conversions
             d_factor = 10 if beam['D'] < 100 else 1
             bm_D = beam['D'] * d_factor
-            bm_tw = beam.get('t1', 6.0)
+            bm_Tw = beam.get('t1', 6.0)
+            bm_Tf = beam.get('t2', 9.0)
+            k_des = 30 # สมมติค่า k (ระยะโค้ง) หรือดึงจาก DB
             
-            st.caption(f"D={bm_D:.0f}, tw={bm_tw}, tf={beam.get('t2',9.0)}")
+            st.caption(f"Depth: {bm_D:.0f} | Web: {bm_Tw} | Workable T: {bm_D - 2*k_des:.0f} mm")
             
-            mat_grade = st.selectbox("Steel Grade", ["ASTM A36 (Fy=250)", "ASTM A572-50 (Fy=345)", "SS400 (Fy=235)"])
-            Vu_load = st.number_input("Factored Shear (Vu)", value=5000.0, step=1000.0, format="%.0f")
+            Vu_load = st.number_input("Factored Load, Vu (kg)", value=5000.0, step=500.0)
+
+        # --- B. BOLT ASSEMBLY (DETAIL) ---
+        with st.expander("2️⃣ Bolt Assembly Spec", expanded=True):
+            c1, c2 = st.columns(2)
+            bolt_dia = c1.selectbox("Dia.", ["M16", "M20", "M22", "M24"], index=1)
+            bolt_grade = c2.selectbox("Grade", ["A325", "A490", "Gr.8.8"], index=0)
             
-        with st.expander("🔹 2. Connection Geometry", expanded=True):
-            # Bolt Spec
-            c_b1, c_b2 = st.columns(2)
-            bolt_dia_str = c_b1.selectbox("Bolt", ["M16", "M20", "M22", "M24"], index=1)
-            bolt_grade = c_b2.selectbox("Grade", ["A325N", "A325X", "A490"], index=0)
-            d_b = float(bolt_dia_str.replace("M",""))
+            d_b = float(bolt_dia.replace("M",""))
             
-            # Dimensions
-            st.markdown("---")
-            n_rows = st.number_input("No. of Rows", 2, 8, 3)
+            # Detailed Condition
+            thread_cond = st.radio("Thread Condition", ["N (Included in Shear)", "X (Excluded)"], index=0, help="N: เกลียวอยู่ในระนาบเฉือน (Capacity ต่ำกว่า)\nX: เกลียวอยู่นอกระนาบเฉือน")
+            hole_type = st.selectbox("Hole Type", ["STD (Standard)", "OVS (Oversize)", "SSL (Short Slot)", "LSL (Long Slot)"])
             
-            # Manual Override for Precision
-            auto_geom = st.checkbox("Auto Geometry", value=True)
-            if auto_geom:
-                pitch = int(3 * d_b)
-                lev = int(1.5 * d_b)
-                leh = 40
-                plate_t = 10 if d_b <= 20 else 12
-            else:
-                pitch = st.number_input("Pitch (s)", min_value=30, value=int(3*d_b))
-                lev = st.number_input("Vert. Edge (Lev)", min_value=20, value=int(1.5*d_b))
-                leh = st.number_input("Horiz. Edge (Leh)", min_value=20, value=40)
-                plate_t = st.selectbox("Plate Tk (tp)", [6, 9, 10, 12, 16, 19, 25], index=3)
+            st.info(f"Hole Size: {d_b + (2 if d_b < 24 else 3)} mm")
+
+        # --- C. PLATE & WELD ---
+        with st.expander("3️⃣ Plate & Weld", expanded=True):
+            plate_grade = st.selectbox("Plate Mat.", ["A36 (Fy=250)", "A572-50 (Fy=345)", "SS400"], index=0)
+            c3, c4 = st.columns(2)
+            plate_t = c3.selectbox("Thick (tp)", [6, 9, 10, 12, 16, 19, 20, 25], index=3)
+            weld_sz = c4.selectbox("Weld (mm)", [4, 5, 6, 8, 10], index=2, help="Fillet weld size at support")
+
+        # --- D. GEOMETRY LAYOUT (CRITICAL) ---
+        with st.expander("4️⃣ Layout & Dimensions", expanded=True):
             
-            setback = st.number_input("Setback (c)", 0, 50, 12, help="Distance from support face to beam end")
+            # 1. Pitch & Edge Controls
+            st.markdown("**Spacing Constraints:**")
+            col_g1, col_g2 = st.columns(2)
+            pitch = col_g1.number_input("Pitch (s)", value=int(3*d_b), min_value=int(2.67*d_b), help="Distance center-to-center")
+            lev = col_g2.number_input("V-Edge (Lev)", value=int(1.5*d_b), min_value=int(1.25*d_b))
+            
+            # 2. Row Calculation & Validation
+            # คำนวณ Max Rows ที่คานนี้รับได้
+            max_rows_allow = get_max_rows(bm_D, bm_Tf, k_des, 10, 10, pitch, lev)
+            
+            st.markdown(f"**Row Config (Max: {max_rows_allow}):**")
+            n_rows = st.number_input("No. of Rows", min_value=2, max_value=max(2, max_rows_allow), value=min(3, max_rows_allow))
+            
+            # 3. Horizontal Setup
+            st.markdown("**Horizontal Setup:**")
+            setback = st.slider("Setback (Gap)", 0, 25, 12)
+            leh = st.number_input("H-Edge (Leh)", value=40, min_value=int(1.25*d_b))
 
     # ==========================================
-    # 2. MAIN VISUALIZATION & CHECKS
+    # 🔵 2. VISUALIZATION & LOGIC
     # ==========================================
-    with col_main:
-        # --- A. HEADER SUMMARY ---
-        # Mockup Calculation
-        phi_rn = 12500 # Placeholder for actual calc
-        ratio = Vu_load / phi_rn
+    with col_viz:
+        # Calculate Derived Dimensions
+        pl_h = (2 * lev) + ((n_rows - 1) * pitch)
+        pl_w = setback + leh + 40 # +40 for tail clearance
         
-        status_color = "red" if ratio > 1.0 else "green"
-        status_text = "NOT OK" if ratio > 1.0 else "OK"
+        # --- TAB DISPLAY ---
+        tab1, tab2 = st.tabs(["🧊 3D Fabrication Model", "📋 Engineering Summary"])
         
-        # Display Banner
-        st.markdown(f"""
-        <div style="background-color: {'#e74c3c' if ratio > 1 else '#2ecc71'}; padding: 15px; border-radius: 5px; color: white; display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <span style="font-size: 1.2em; font-weight: bold;">Status: {status_text}</span><br>
-                <span style="font-size: 0.9em;">Demand/Capacity Ratio = {ratio:.2f}</span>
-            </div>
-            <div style="text-align: right;">
-                <span style="font-size: 1.5em; font-weight: bold;">Vu = {Vu_load:,.0f} kg</span><br>
-                <span style="font-size: 1.0em;">φRn = {phi_rn:,.0f} kg</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.write("") # Spacer
-
-        # --- B. TABS: 3D MODEL / GEOMETRY CHECK / REPORT ---
-        tab_viz, tab_check, tab_report = st.tabs(["🧊 3D Shop Drawing", "📏 Geometry Checks", "📝 Calculation Sheet"])
-        
-        # --- PREPARE DATA FOR DRAWER ---
-        beam_dims = {'H': bm_D, 'B': beam['B']*d_factor, 'Tw': bm_tw, 'Tf': beam.get('t2',9.0)}
-        bolt_dims = {'dia': d_b, 'n_rows': n_rows, 'pitch': pitch, 'lev': lev, 'leh_beam': leh}
-        pl_h = (2*lev) + (n_rows-1)*pitch
-        pl_w = setback + leh + 40
-        plate_dims = {'t': plate_t, 'w': pl_w, 'h': pl_h}
-        config = {'setback': setback, 'L_beam_show': bm_D*1.5}
-
-        with tab_viz:
-            # ใช้ Engine วาดรูปที่แยกไว้
+        with tab1:
+            # 3D DRAWER
+            beam_dims = {'H': bm_D, 'B': beam['B']*d_factor, 'Tw': bm_Tw, 'Tf': bm_Tf}
+            bolt_dims = {'dia': d_b, 'n_rows': n_rows, 'pitch': pitch, 'lev': lev, 'leh_beam': leh}
+            plate_dims = {'t': plate_t, 'w': pl_w, 'h': pl_h}
+            config = {'setback': setback, 'L_beam_show': bm_D*1.5}
+            
             fig = create_connection_figure(beam_dims, plate_dims, bolt_dims, config)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Quick specs line
-            st.caption(f"**Spec:** PL{plate_t}x{pl_w}x{pl_h} mm | {n_rows}-{bolt_dia_str} {bolt_grade} | Weld: 6mm Fillet (Typ)")
+            # Quick Check Badge
+            if pl_h > (bm_D - 2*bm_Tf):
+                st.error(f"🚨 **CRITICAL GEOMETRY ERROR:** Plate height ({pl_h} mm) exceeds Web depth!")
+            else:
+                st.success(f"✅ Geometry Fits: Plate H {pl_h} mm < Web Clear {bm_D - 2*bm_Tf:.0f} mm")
 
-        with tab_check:
-            st.markdown("#### ✅ Geometric & Code Compliance (AISC J3)")
-            df_checks = check_geometry_compliance(d_b, pitch, lev, leh, n_rows, bm_D)
+        with tab2:
+            st.markdown("#### ⚙️ Fabrication Specification")
             
-            # Custom formatting for the table
-            def color_status(val):
-                if val == "FAIL": return 'color: red; font-weight: bold;'
-                elif val == "WARN": return 'color: orange; font-weight: bold;'
-                return 'color: green; font-weight: bold;'
-
-            st.dataframe(
-                df_checks.style.applymap(color_status, subset=['status']),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            if "FAIL" in df_checks['status'].values:
-                st.error("🛑 Geometry check failed. Please adjust Dimensions or Rows.")
-
-        with tab_report:
-            st.markdown("#### 📜 Limit State Summary")
-            
-            # นี่คือ Mockup ที่คุณควรเอา output จริงจาก calculator.py มาใส่
-            # แสดงเป็นสมการสวยๆ แบบวิศวกรชอบ
+            # Summary Table
+            summ_data = {
+                "Parameter": ["Bolt Spec", "Hole Type", "Threads", "Plate Size", "Weld Size", "Geometry (s / Lev / Leh)"],
+                "Value": [
+                    f"{n_rows} - {bolt_dia} {bolt_grade}",
+                    hole_type,
+                    f"Shear Plane: {'Excluded' if 'X' in thread_cond else 'Included'}",
+                    f"PL{plate_t} x {pl_w} x {pl_h} mm ({plate_grade.split()[0]})",
+                    f"{weld_sz} mm Fillet (E70XX)",
+                    f"{pitch} / {lev} / {leh} mm"
+                ]
+            }
+            st.table(pd.DataFrame(summ_data))
             
             st.markdown("---")
-            
-            c_calc1, c_calc2 = st.columns(2)
-            
-            with c_calc1:
-                st.markdown("**1. Bolt Shear (φRn)**")
-                st.latex(r"\phi R_n = n \times F_{nv} \times A_b \times 0.75")
-                st.write(f"= {n_rows} × ... = **{12500:,.0f} kg**")
-                
-                st.markdown("**3. Plate Shear Yielding**")
-                st.latex(r"\phi R_n = 1.00 \times 0.6 F_y A_g")
-                st.write(f"= ... = **{15200:,.0f} kg**")
-
-            with c_calc2:
-                st.markdown("**2. Bearing on Plate**")
-                st.latex(r"\phi R_n = n \times (2.4 d t F_u) \times 0.75")
-                st.write(f"= ... = **{18000:,.0f} kg**")
-                
-                st.markdown("**4. Plate Shear Rupture**")
-                st.latex(r"\phi R_n = 0.75 \times 0.6 F_u A_{nv}")
-                st.write(f"= ... = **{13500:,.0f} kg**")
-
-            st.markdown("---")
-            st.info("💡 **Governing Case:** Bolt Shear")
+            st.info("💡 **Note:** Bolt length to be determined based on Grip = Tw + tp + Washer + Nut + Stickout.")
