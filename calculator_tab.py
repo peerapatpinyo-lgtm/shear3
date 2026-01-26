@@ -6,7 +6,7 @@ def calculate_shear_tab(inputs):
     คำนวณ Shear Tab Connection (Single Plate) ตาม AISC 360-16
     รองรับ: Bolt Shear, Bearing, Shear Yield, Shear Rupture, Block Shear, Weld
     รองรับ: ASD / LRFD
-    Update: เพิ่มการแสดงผล 'การแทนค่า' (Substitution)
+    Update: เพิ่ม Reference (AISC Section/Equation)
     """
     
     # 1. UNPACK INPUTS
@@ -69,7 +69,6 @@ def calculate_shear_tab(inputs):
         'weld':    [2.00, 0.75]
     }
 
-    # Helper function to generate Capacity + Substitution String
     def get_capacity_and_sub(Rn, rn_sub_str, mode_key):
         omega, phi = factors[mode_key]
         
@@ -78,14 +77,12 @@ def calculate_shear_tab(inputs):
             lab = r"R_n / \Omega"
             factor_val = omega
             symbol = "Ω"
-            # Substitution format for ASD: Fraction
             sub_str = f"\\frac{{ {rn_sub_str} }}{{ {omega:.2f} }}"
         else: # LRFD
             cap = phi * Rn
             lab = r"\phi R_n"
             factor_val = phi
             symbol = "φ"
-            # Substitution format for LRFD: Multiplication
             sub_str = f"{phi:.2f} \\times [{rn_sub_str}]"
             
         return cap, lab, factor_val, symbol, sub_str
@@ -95,17 +92,15 @@ def calculate_shear_tab(inputs):
 
     # ============================================
     # MODE 1: BOLT SHEAR
-    # Rn = Fnv * Ab * N_bolts
+    # Ref: AISC Spec J3.6, Eq J3-1
     # ============================================
     Rn_bolt = Fnv * Ab * n
-    
-    # Prepare Rn Substitution String
     rn_sub_bolt = f"{Fnv} \\times {Ab:.2f} \\times {n}"
-    
     cap_bolt, lab_bolt, f_bolt, sym_bolt, sub_bolt = get_capacity_and_sub(Rn_bolt, rn_sub_bolt, 'bolt')
     
     results['bolt_shear'] = {
         'title': "Bolt Shear",
+        'ref': "AISC 360-16 Sec. J3.6 (Eq. J3-1)",
         'capacity': cap_bolt,
         'ratio': Vu / cap_bolt,
         'latex_eq': f"{lab_bolt} = {sym_bolt} F_{{nv}} A_b N_{{bolt}}",
@@ -121,6 +116,7 @@ def calculate_shear_tab(inputs):
 
     # ============================================
     # MODE 2: BEARING & TEAROUT
+    # Ref: AISC Spec J3.10, Eq J3-6a
     # ============================================
     def calc_bearing_detail(thickness, Fu_mat, edge_dist_v, inner_pitch):
         # Edge Bolt
@@ -136,23 +132,19 @@ def calculate_shear_tab(inputs):
             Rn_in_max = 2.4 * (db/10) * (thickness/10) * Fu_mat
             Rn_in = min(Rn_in_formula, Rn_in_max)
             Rn_total = Rn_edge + (Rn_in * (n-1))
-            # Substitution detail string (simplified for display)
             sub_detail = f"({Rn_edge:.0f}) + {n-1}\\times({Rn_in:.0f})"
         else:
             Rn_total = Rn_edge
             sub_detail = f"{Rn_edge:.0f}"
-            
         return Rn_total, sub_detail
 
-    # Calculate both
     Rn_br_pl, sub_pl = calc_bearing_detail(tp, Fu_pl, lev, s)
     Rn_br_bm, sub_bm = calc_bearing_detail(Tw, Fu_bm, lev, s)
     
-    # Determine Governor
     if Rn_br_pl < Rn_br_bm:
         Rn_br_gov = Rn_br_pl
         gov_br = "Plate"
-        rn_sub_br = f"\\text{{Plate: }} {sub_pl}" # Show the inner calculation sum
+        rn_sub_br = f"\\text{{Plate: }} {sub_pl}"
     else:
         Rn_br_gov = Rn_br_bm
         gov_br = "Beam Web"
@@ -162,9 +154,10 @@ def calculate_shear_tab(inputs):
     
     results['bearing'] = {
         'title': f"Bearing & Tearout ({gov_br})",
+        'ref': "AISC 360-16 Sec. J3.10 (Eq. J3-6a)",
         'capacity': cap_br,
         'ratio': Vu / cap_br,
-        'latex_eq': f"{lab_br} = {sym_br} \\Sigma (1.2 L_c t F_u)",
+        'latex_eq': f"{lab_br} = {sym_br} \\Sigma (1.2 L_c t F_u \leq 2.4 d t F_u)",
         'latex_sub': sub_br_final,
         'calcs': [
             f"Method: {method} ({sym_bolt} = {f_br})",
@@ -178,17 +171,16 @@ def calculate_shear_tab(inputs):
 
     # ============================================
     # MODE 3: SHEAR YIELDING (Plate)
-    # Rn = 0.6 * Fy * Ag
+    # Ref: AISC Spec J4.2, Eq J4-3
     # ============================================
     Ag_pl = (h_pl/10) * (tp/10)
     Rn_yld = 0.6 * Fy_pl * Ag_pl
-    
     rn_sub_yld = f"0.6 \\times {Fy_pl} \\times {Ag_pl:.2f}"
-    
     cap_yld, lab_yld, f_yld, sym_yld, sub_yld = get_capacity_and_sub(Rn_yld, rn_sub_yld, 'yield')
     
     results['shear_yield'] = {
         'title': "Shear Yield (Plate)",
+        'ref': "AISC 360-16 Sec. J4.2 (Eq. J4-3)",
         'capacity': cap_yld,
         'ratio': Vu / cap_yld,
         'latex_eq': f"{lab_yld} = {sym_yld} (0.6 F_y A_g)",
@@ -204,17 +196,16 @@ def calculate_shear_tab(inputs):
 
     # ============================================
     # MODE 4: SHEAR RUPTURE (Plate)
-    # Rn = 0.6 * Fu * Anv
+    # Ref: AISC Spec J4.2, Eq J4-4
     # ============================================
     Anv_pl = ((h_pl - (n * dh))/10) * (tp/10)
     Rn_rup = 0.6 * Fu_pl * Anv_pl
-    
     rn_sub_rup = f"0.6 \\times {Fu_pl} \\times {Anv_pl:.2f}"
-    
     cap_rup, lab_rup, f_rup, sym_rup, sub_rup = get_capacity_and_sub(Rn_rup, rn_sub_rup, 'rupture')
     
     results['shear_rupture'] = {
         'title': "Shear Rupture (Plate)",
+        'ref': "AISC 360-16 Sec. J4.2 (Eq. J4-4)",
         'capacity': cap_rup,
         'ratio': Vu / cap_rup,
         'latex_eq': f"{lab_rup} = {sym_rup} (0.6 F_u A_{{nv}})",
@@ -230,6 +221,7 @@ def calculate_shear_tab(inputs):
 
     # ============================================
     # MODE 5: BLOCK SHEAR
+    # Ref: AISC Spec J4.3, Eq J4-5
     # ============================================
     def calc_block_shear(t, Fy, Fu, Le_v, Le_h, n_b, pitch):
         L_gv = Le_v + (n_b - 1) * pitch
@@ -243,7 +235,6 @@ def calculate_shear_tab(inputs):
         
         Rn = min(term1, term2)
         
-        # Create sub string for the governing term
         if term1 < term2:
             sub_str = f"0.6({Fu})({Anv:.2f}) + 1.0({Fu})({Ant:.2f})"
         else:
@@ -267,6 +258,7 @@ def calculate_shear_tab(inputs):
     
     results['block_shear'] = {
         'title': f"Block Shear ({gov_bs})",
+        'ref': "AISC 360-16 Sec. J4.3 (Eq. J4-5)",
         'capacity': cap_bs,
         'ratio': Vu / cap_bs,
         'latex_eq': f"{lab_bs} = {sym_bs} [0.6 F_u A_{{nv}} + U_{{bs}} F_u A_{{nt}}]",
@@ -283,6 +275,7 @@ def calculate_shear_tab(inputs):
 
     # ============================================
     # MODE 6: WELD STRENGTH
+    # Ref: AISC Spec J2.4, Eq J2-3
     # ============================================
     Fexx = 4900 # E70XX
     te = 0.707 * weld_D
@@ -290,13 +283,12 @@ def calculate_shear_tab(inputs):
     Aw = (te/10) * (Lw/10)
     
     Rn_weld = 0.6 * Fexx * Aw
-    
     rn_sub_weld = f"0.6 \\times {Fexx} \\times {Aw:.2f}"
-    
     cap_weld, lab_weld, f_weld, sym_weld, sub_weld = get_capacity_and_sub(Rn_weld, rn_sub_weld, 'weld')
     
     results['weld'] = {
         'title': "Weld Strength",
+        'ref': "AISC 360-16 Sec. J2.4 (Eq. J2-3)",
         'capacity': cap_weld,
         'ratio': Vu / cap_weld,
         'latex_eq': f"{lab_weld} = {sym_weld} (0.6 F_{{EXX}} A_w)",
