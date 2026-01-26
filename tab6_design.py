@@ -1,50 +1,44 @@
 import streamlit as st
-import calculator_tab  # ต้องมีไฟล์ calculator_tab.py ในโฟลเดอร์เดียวกัน
-import drawer_3d       # ต้องมีไฟล์ drawer_3d.py ในโฟลเดอร์เดียวกัน
+import calculator_tab
+import drawer_3d
 
-# [FIX] เปลี่ยนชื่อฟังก์ชันให้ตรงกับที่ app.py เรียกใช้
 def render_tab6():
-    st.markdown("## 🔩 Shear Tab Connection Design (AISC 360-16)")
-    st.info("💡 Design Check: Shear Yield, Shear Rupture, Block Shear, Bolt Shear, Bearing & Tearout")
+    st.markdown("## Shear Tab Connection Design (AISC 360-16)")
+    st.info("Design Check: Shear Yield, Shear Rupture, Block Shear, Bolt Shear, Bearing & Tearout")
 
-    # ==========================================
-    # 1. INPUT SECTION
-    # ==========================================
+    # INPUT SECTION
     col1, col2, col3 = st.columns([1, 1, 1.2])
 
     material_list = ["SS400", "A36", "SM520", "A572-50", "A992"]
 
     with col1:
-        st.markdown("### 🏗️ Beam Data")
-        # [UPDATED] เพิ่ม Beam Span เพื่อเช็ค Deep Beam
-        beam_span = st.number_input("Beam Span Length (mm)", value=6000.0, step=500.0, help="ใช้ตรวจสอบ Deep Beam Condition (L/D < 4)")
-        
+        st.markdown("### Beam Data")
+        beam_span = st.number_input("Beam Span Length (mm)", value=6000.0, step=500.0)
         beam_d = st.number_input("Beam Depth (mm)", value=400.0, step=10.0)
         beam_b = st.number_input("Beam Width (mm)", value=200.0, step=5.0)
         beam_tw = st.number_input("Web Thickness (mm)", value=8.0, step=0.5)
         beam_tf = st.number_input("Flange Thickness (mm)", value=13.0, step=0.5)
-        
         mat_bm = st.selectbox("Beam Material", material_list, index=0)
 
         st.markdown("---")
-        st.markdown("### 📥 Loads")
+        st.markdown("### Loads")
         Vu_input = st.number_input("Shear Load Vu (kg)", value=15000.0, step=1000.0)
         method = st.radio("Design Method", ["LRFD", "ASD"], horizontal=True)
 
     with col2:
-        st.markdown("### 🔧 Connection Config")
+        st.markdown("### Connection Config")
         # Plate
         st.caption("Plate Properties")
         tp = st.selectbox("Plate Thickness (mm)", [6, 9, 10, 12, 16, 19, 25], index=2)
         h_pl = st.number_input("Plate Height (mm)", value=250.0)
         mat_pl = st.selectbox("Plate Material", material_list, index=0)
         
-        # [UPDATED] เพิ่ม Electrode Selection
+        # Weld
         col_w1, col_w2 = st.columns(2)
         with col_w1:
             weld_sz = st.number_input("Weld Size (mm)", value=6.0, step=1.0)
         with col_w2:
-            electrode = st.selectbox("Electrode", ["E70", "E60"], index=0, help="E70=4921ksc, E60=4218ksc")
+            electrode = st.selectbox("Electrode", ["E70", "E60"], index=0)
         
         # Bolts
         st.caption("Bolt Properties")
@@ -55,30 +49,22 @@ def render_tab6():
         # Geometry
         st.caption("Geometry")
         pitch = st.number_input("Pitch (s) [mm]", value=75.0)
-        lev = st.number_input("Vertical Edge (Lev) [mm]", value=40.0, help="ระยะขอบบนสุดถึงน็อตตัวแรก")
-        leh = st.number_input("Horizontal Edge (Leh) [mm]", value=35.0, help="ระยะขอบข้างถึงเซนเตอร์รูเจาะ")
+        lev = st.number_input("Vertical Edge (Lev) [mm]", value=40.0)
+        leh = st.number_input("Horizontal Edge (Leh) [mm]", value=35.0)
 
-    # ==========================================
-    # 2. CALCULATION & PROCESSING
-    # ==========================================
+    # CALCULATION
     inputs = {
         'method': method,
         'load': Vu_input,
-        
-        # Beam Data (Updated)
         'beam_d': beam_d,
         'beam_tw': beam_tw,
-        'beam_span': beam_span, # For Deep Beam Check
+        'beam_span': beam_span,
         'beam_mat': mat_bm,
-        
-        # Plate & Weld (Updated)
         'plate_t': tp,
         'plate_h': h_pl,
         'plate_mat': mat_pl,
         'weld_sz': weld_sz,
-        'electrode': electrode, # Check E60/E70
-        
-        # Bolt & Geom
+        'electrode': electrode,
         'bolt_dia': d_b,
         'bolt_grade': grade_bolt,
         'n_rows': int(n_rows),
@@ -89,56 +75,44 @@ def render_tab6():
 
     results = calculator_tab.calculate_shear_tab(inputs)
 
-    # ==========================================
-    # 3. DISPLAY RESULTS
-    # ==========================================
+    # DISPLAY RESULTS
     with col3:
-        st.markdown("### 📊 Check Results")
+        st.markdown("### Check Results")
         
-        # Status Box
         status = results['summary']['status']
         util = results['summary']['utilization']
         gov = results['summary']['gov_mode']
         
+        # Status Box
+        color = "#27ae60" if status == "PASS" else "#c0392b"
         st.markdown(
             f"""
-            <div style="
-                background-color: {'#27ae60' if status == 'PASS' else '#c0392b'}; 
-                padding: 15px; border-radius: 8px; color: white; text-align: center; margin-bottom: 15px;">
+            <div style="background-color: {color}; padding: 15px; border-radius: 8px; color: white; text-align: center; margin-bottom: 15px;">
                 <h2 style="margin:0;">{status}</h2>
                 <p style="margin:0; font-size: 1.1em;">Ratio: {util:.2f} <br><span style="font-size:0.9em; opacity:0.9">({gov})</span></p>
             </div>
             """, unsafe_allow_html=True
         )
 
-        # [UPDATED] Display Warnings if any (Deep Beam)
         if results.get('warnings'):
             for warn in results['warnings']:
-                st.warning(warn, icon="⚠️")
+                st.warning(warn)
 
-        # Detailed Breakdown
         check_list = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'weld']
         
         for key in check_list:
             res = results[key]
             ratio = res['ratio']
-            icon = "✅" if ratio <= 1.0 else "❌"
+            icon = "PASS" if ratio <= 1.0 else "FAIL"
             
-            with st.expander(f"{icon} {res['title']} (Ratio: {ratio:.2f})"):
+            with st.expander(f"[{icon}] {res['title']} (Ratio: {ratio:.2f})"):
                 st.latex(res['latex_eq'])
                 st.markdown(f"**Capacity:**")
                 st.latex(f"{res['latex_sub']} = {res['capacity']:,.0f} kg")
-                
-                if res['calcs']:
-                    st.markdown("---")
-                    for line in res['calcs']:
-                        st.caption(f"• {line}")
 
-    # ==========================================
-    # 4. 3D VISUALIZATION
-    # ==========================================
+    # 3D VISUALIZATION
     st.markdown("---")
-    st.markdown("### 🧊 3D Connection Preview")
+    st.markdown("### 3D Connection Preview")
     
     viz_beam = {'H': beam_d, 'B': beam_b, 'Tw': beam_tw, 'Tf': beam_tf}
     plate_width_est = leh + 50.0 
@@ -154,3 +128,6 @@ def render_tab6():
     
     fig = drawer_3d.create_connection_figure(viz_beam, viz_plate, viz_bolt, viz_config)
     st.plotly_chart(fig, use_container_width=True)
+
+if __name__ == "__main__":
+    render_tab6()
