@@ -21,7 +21,8 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
 # 🏗️ MAIN UI RENDERER
 # ==========================================
 def render_tab6(method, Fy, E_gpa, def_limit):
-    st.markdown("### 🏗️ Shear Plate Design (Detailed Report)")
+    # Method = "ASD" or "LRFD" passed from app.py
+    st.markdown(f"### 🏗️ Shear Plate Design ({method} Method)")
     col_input, col_viz = st.columns([1.3, 2.5])
 
     # --- 1. INPUT SECTION ---
@@ -41,7 +42,9 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             
             # Load & Materials
             c_load, c_mat = st.columns(2)
-            Vu_load = c_load.number_input("V_u (kg)", value=5000.0, step=500.0)
+            # Label change based on method
+            load_label = "Va (kg)" if method == "ASD" else "Vu (kg)"
+            Vu_load = c_load.number_input(load_label, value=5000.0, step=500.0)
             mat_grade = c_mat.selectbox("Mat.", ["A36", "SS400", "A572-50"])
 
         with st.expander("2️⃣ Bolt & Geometry", expanded=True):
@@ -79,8 +82,9 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             pl_h = (2 * lev) + ((n_rows - 1) * pitch)
 
     # --- 2. CALCULATION LINK ---
-    # Prepare inputs for calculator
+    # Prepare inputs for calculator (Added 'method')
     calc_inputs = {
+        'method': method,
         'load': Vu_load,
         'beam_tw': bm_Tw, 'beam_mat': mat_grade,
         'plate_t': plate_t, 'plate_h': pl_h, 'plate_mat': mat_grade,
@@ -102,7 +106,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         <div style="background-color: {status_color}; padding: 15px; border-radius: 8px; color: white; margin-bottom: 10px;">
             <h3 style="margin:0;">{summary['status']} (Ratio: {summary['utilization']:.2f})</h3>
             <p style="margin:0;">Load: {Vu_load:,.0f} kg | Capacity: {summary['gov_capacity']:,.0f} kg</p>
-            <small>Governing Mode: {summary['gov_mode']}</small>
+            <small>Governing Mode: {summary['gov_mode']} ({method})</small>
         </div>
         """, unsafe_allow_html=True)
         
@@ -122,10 +126,9 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                 st.error(f"❌ Error Plotting: {e}")
 
         with tab2:
-            st.markdown("#### 📐 Engineering Calculation Report (AISC LRFD)")
+            st.markdown(f"#### 📐 Engineering Calculation Report ({method})")
             st.markdown("---")
             
-            # Loop through modes (Updated to include block_shear)
             modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
             
             for mode in modes:
@@ -133,26 +136,27 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                 if data:
                     # Header
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
-                    # ใช้ Expander แสดงผล เพื่อความสะอาดตา
                     with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
                         
-                        # 1. แสดงสูตร LaTeX
+                        # 1. LaTeX Eq
                         if 'latex_eq' in data:
                             st.latex(data['latex_eq'])
                         
-                        # 2. แสดงขั้นตอนการแทนค่า
+                        # 2. Steps
                         st.markdown("**Calculation Steps:**")
                         if 'calcs' in data:
                             for step in data['calcs']:
                                 st.markdown(f"- {step}")
-                        elif 'desc' in data: # Fallback เผื่อกรณีไฟล์ไม่ตรงกัน
-                            st.markdown(f"- {data['desc']}")
                         
-                        # 3. สรุปผล
+                        # 3. Result
                         res_color = "green" if data['ratio'] <= 1.0 else "red"
                         sign = '≥' if data['ratio'] <= 1.0 else '<'
+                        
+                        # Dynamic Symbol display
+                        cap_symbol = "Rn/Ω" if method == "ASD" else "φRn"
+                        
                         st.markdown(f"""
                         <div style="background-color: rgba(0,0,0,0.05); padding: 8px; border-radius: 4px; border-left: 4px solid {res_color};">
-                            <b>Result:</b> φRn = {data['phi_Rn']:.0f} kg {sign} Vu ({Vu_load:.0f} kg)
+                            <b>Result:</b> {cap_symbol} = {data['capacity']:.0f} kg {sign} Load ({Vu_load:.0f} kg)
                         </div>
                         """, unsafe_allow_html=True)
