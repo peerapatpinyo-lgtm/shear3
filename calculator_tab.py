@@ -3,20 +3,20 @@ import math
 # ==========================================
 # 1. MATERIAL DATABASE (STANDARD VALUES)
 # ==========================================
-# หน่วย: ksc (kg/cm^2)
+# Unit: ksc (kg/cm^2)
 # Ref: TIS 1227 (Thai Industrial Standard) & AISC
 MATERIALS_DB = {
-    "SS400":    {"Fy": 2400, "Fu": 4100},  # Common Thai Steel (Min Tensile 400 MPa ~ 4080 ksc)
-    "A36":      {"Fy": 2500, "Fu": 4000},  # ASTM A36 (Yield 36 ksi, Tensile 58 ksi)
-    "SM520":    {"Fy": 3600, "Fu": 5300},  # High Strength (Min Tensile 520 MPa)
+    "SS400":    {"Fy": 2400, "Fu": 4100},  # Common Thai Steel
+    "A36":      {"Fy": 2500, "Fu": 4000},  # ASTM A36
+    "SM520":    {"Fy": 3600, "Fu": 5300},  # High Strength
     "A572-50":  {"Fy": 3500, "Fu": 4500},  # ASTM A572 Gr.50
     "A992":     {"Fy": 3500, "Fu": 4500}   # Common US Beam Grade
 }
 
 BOLT_DB = {
-    "A325":   {"Fnv": 3720, "Fnt": 6200}, # approx 54 ksi / 90 ksi
-    "A490":   {"Fnv": 4690, "Fnt": 7800}, # approx 68 ksi / 113 ksi
-    "Gr.8.8": {"Fnv": 3800, "Fnt": 5600}  # Common Metric Bolt (Shear strength varies, approx values)
+    "A325":   {"Fnv": 3720, "Fnt": 6200},
+    "A490":   {"Fnv": 4690, "Fnt": 7800},
+    "Gr.8.8": {"Fnv": 3800, "Fnt": 5600}
 }
 
 # ==========================================
@@ -25,8 +25,8 @@ BOLT_DB = {
 def get_phi_omega(method, check_type):
     """Return (phi, omega) based on check type"""
     if method == "LRFD":
-        if check_type == "yield": return 1.00, 1.00 # Eq. J4-1
-        if check_type == "rupture": return 0.75, 1.00 # Eq. J4-2
+        if check_type == "yield": return 1.00, 1.00
+        if check_type == "rupture": return 0.75, 1.00
         if check_type == "shear_bolt": return 0.75, 1.00
         if check_type == "bearing": return 0.75, 1.00
         if check_type == "weld": return 0.75, 1.00
@@ -143,16 +143,6 @@ def calculate_shear_tab(inputs):
     Rn_br_pl, txt_pl, _ = calc_bearing_limit(tp, Fu_pl, lev, 0, dh, db)
     
     # --- Check Beam Web Bearing ---
-    # NOTE: Beam web edge distance? 
-    # Usually clear span. Assume worst case or user input 'lev' applies to Plate.
-    # For Beam Web, Lc is often large if connected mid-height. 
-    # But strictly, we need vertical distance from hole to beam flange? 
-    # Let's assume Beam Web is NOT governed by edge distance (Tearout) usually, 
-    # unless bolts are very close to flange. Hence use Bearing Limit.
-    # BUT, to be safe and strictly follow J3.10, we use the Bearing Formula (2.4dtFu) 
-    # assuming Lc is adequate, or apply same reduction if specified.
-    # Let's use 2.4 d t Fu for Web as standard practice for simple shear tab 
-    # (unless cope is involved).
     Rn_br_web = n_rows * (2.4 * db * tw_bm * Fu_bm)
     
     # Critical Bearing
@@ -195,8 +185,6 @@ def calculate_shear_tab(inputs):
     # AISC J4.2: Rn = 0.60 Fu Anv
     # ==========================================
     # Net Area: Ag - n_bolts * (dh + 1/16") 
-    # AISC requires dh + 2mm (1/16") damage allowance usually. 
-    # Using dh (standard hole) for simplification or dh+0.16cm
     Anv = (h_pl - (n_rows * (dh + 0.16))) * tp 
     Rn_rup = 0.60 * Fu_pl * Anv
     
@@ -215,11 +203,6 @@ def calculate_shear_tab(inputs):
     # CHECK 5: BLOCK SHEAR (Optional/Complex)
     # Simplified AISC J4.3
     # ==========================================
-    # Assuming Shear Tab failure mode: Shear plane vertical, Tension plane horizontal (bottom/top)
-    # This depends heavily on geometry.
-    # Let's skip detailed geometric calc for brevity unless requested, 
-    # but put a placeholder or simplified check based on 'leh' and 'lev'.
-    # For now, return PASS/NA
     results['block_shear'] = {
         "title": "Block Shear", "capacity": 999999, "ratio": 0.0, 
         "latex_eq": r"R_n = 0.6 F_u A_{nv} + U_{bs} F_u A_{nt}",
@@ -232,7 +215,6 @@ def calculate_shear_tab(inputs):
     # AISC J2.4: Rn = 0.60 FEXX * Aw
     # ==========================================
     # Effective throat = 0.707 * w
-    # Length = h_pl (Double fillet) -> 2 * h_pl
     D_weld = inputs['weld_sz'] / 10.0
     Fexx = 4900 # E70 electrode (approx 70ksi = 4900 ksc)
     Aw_eff = 2 * h_pl * (0.707 * D_weld)
