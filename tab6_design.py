@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import math
 from database import SYS_H_BEAMS
 from drawer_3d import create_connection_figure
 import calculator_tab as calc 
@@ -18,7 +19,6 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
     return max(0, max_n)
 
 def calculate_beam_shear_capacity(beam, Fy, method):
-    """คำนวณ Shear Capacity ของคาน (Vn/Omega หรือ Phi*Vn) เพื่อใช้เป็นฐาน 75%"""
     d_mm = beam['D']
     tw_mm = beam.get('t1', 6.0)
     Aw = (d_mm * tw_mm) / 100.0 # cm2
@@ -31,32 +31,82 @@ def calculate_beam_shear_capacity(beam, Fy, method):
     return v_cap
 
 def get_aisc_min_values(d_b):
-    """
-    คืนค่า Minimum Edge Distance (AISC Table J3.3M) 
-    และ Minimum Spacing (AISC J3.3 Section 3.3)
-    """
-    # 1. Min Spacing (Standard = 2.67d, Preferred = 3d)
     min_spacing = 2.67 * d_b
     pref_spacing = 3.0 * d_b
     
-    # 2. Min Edge Distance (AISC Table J3.3M)
-    # Mapping for Standard Holes
-    if d_b <= 16:
-        min_edge = 22
-    elif d_b <= 20:
-        min_edge = 26
-    elif d_b <= 22:
-        min_edge = 28
-    elif d_b <= 24:
-        min_edge = 30
-    elif d_b <= 27:
-        min_edge = 34
-    elif d_b <= 30:
-        min_edge = 38
-    else:
-        min_edge = 1.25 * d_b # Generic fallback
+    if d_b <= 16: min_edge = 22
+    elif d_b <= 20: min_edge = 26
+    elif d_b <= 22: min_edge = 28
+    elif d_b <= 24: min_edge = 30
+    elif d_b <= 27: min_edge = 34
+    elif d_b <= 30: min_edge = 38
+    else: min_edge = 1.25 * d_b 
         
     return int(min_edge), round(min_spacing, 1), round(pref_spacing, 1)
+
+# [NEW] Calculate Eccentric Weld Stress (Elastic Method)
+def calculate_eccentric_weld(load_kg, e_mm, L_mm, weld_sz_mm, method):
+    # 1. Geometry & Properties
+    e_cm = e_mm / 10.0
+    L_cm = L_mm / 10.0
+    w_cm = weld_sz_mm / 10.0
+    
+    # Effective Throat (0.707 * size)
+    te = 0.707 * w_cm
+    
+    # Section Properties (Double Fillet Weld treated as lines)
+    # Area of weld throat
+    Aw = 2 * (te * L_cm)  # cm2
+    
+    # Section Modulus (Sw) for 2 vertical lines
+    # I = 2 * (te * L^3 / 12)
+    # c = L / 2
+    # Sw = I / c = 2 * (te * L^2 / 6) = te * L^2 / 3
+    Sw = (te * (L_cm**2)) / 3.0 # cm3
+    
+    # 2. Stresses
+    # Direct Shear (fv)
+    fv = load_kg / Aw # ksc
+    
+    # Bending Stress due to Eccentricity (fb) = M / Sw
+    Moment = load_kg * e_cm # kg-cm
+    fb = Moment / Sw # ksc
+    
+    # Resultant Stress (Vector Sum)
+    fr = math.sqrt(fv**2 + fb**2) # ksc
+    
+    # 3. Capacity Limit (E70XX Electrode)
+    Fexx = 4921 # ksc (70 ksi)
+    Fnw = 0.6 * Fexx # Nominal Strength
+    
+    if method == "ASD":
+        # Omega = 2.00
+        F_limit = Fnw / 2.00
+        cap_load = (F_limit / fr) * load_kg # Back-calculate capacity load
+    else:
+        # Phi = 0.75
+        F_limit = 0.75 * Fnw
+        cap_load = (F_limit / fr) * load_kg
+        
+    ratio = fr / F_limit
+    
+    # Prepare Detail Object
+    return {
+        'title': 'Eccentric Weld Check',
+        'capacity': cap_load,
+        'ratio': ratio,
+        'ref': 'AISC Part 8 (Elastic Method)',
+        'latex_eq': r'f_r = \sqrt{f_v^2 + f_b^2} \leq \phi F_{nw}',
+        'latex_sub': fr'f_v = \frac{{P}}{{A_w}}, \quad f_b = \frac{{P \cdot e}}{{S_w}}',
+        'calcs': [
+            f"Eccentricity (e) = {e_mm} mm (Plate Width - Leh)",
+            f"Weld Length (L) = {L_mm} mm",
+            f"Direct Shear (fv) = {fv:.2f} ksc",
+            f"Bending Stress (fb) = {fb:.2f} ksc (Moment = {Moment:,.0f} kg-cm)",
+            f"Resultant Stress (fr) = {fr:.2f} ksc",
+            f"Limit Stress ({method}) = {F_limit:.2f} ksc"
+        ]
+    }
 
 # ==========================================
 # 🏗️ MAIN UI RENDERER
@@ -64,20 +114,16 @@ def get_aisc_min_values(d_b):
 def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     st.markdown(f"### 🏗️ Shear Plate Design ({method} Method)")
     
-    # 1. ดึงข้อมูลจาก Database
     if section_name not in SYS_H_BEAMS:
         section_name = list(SYS_H_BEAMS.keys())[0]
         
     beam = SYS_H_BEAMS[section_name]
-    
-    # Extract Beam Props
     d_factor = 10 if beam['D'] < 100 else 1
     bm_D = beam['D'] * d_factor
     bm_Tw = beam.get('t1', 6.0)
     bm_Tf = beam.get('t2', 9.0)
     k_des = 30 
 
-    # 2. Deep Beam Check
     ld_ratio = (span_m * 1000) / bm_D
     is_deep_beam = False
     
@@ -87,28 +133,13 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     with col_input:
         with st.expander("1️⃣ Beam Info & Load Verification", expanded=True):
             st.info(f"📌 **Current Beam:** `{section_name}`")
-            
-            st.markdown(f"""
-            - **Depth (D):** {bm_D:.0f} mm
-            - **Web (Tw):** {bm_Tw} mm
-            - **Span (L):** {span_m} m
-            """)
+            st.markdown(f"- **Depth:** {bm_D:.0f} mm | **Span:** {span_m} m")
 
             if ld_ratio < 4.0:
                 is_deep_beam = True
-                st.warning(f"⚠️ **Deep Beam Warning!** (L/D = {ld_ratio:.2f})")
-                st.markdown("""
-                <small style="color: #856404;">
-                Span-to-depth ratio < 4. Standard beam theory allows only approximate results.
-                <b>Recommendation:</b> Verify with Strut-and-Tie Model.
-                </small>
-                """, unsafe_allow_html=True)
-            else:
-                st.success(f"✅ Geometry OK (L/D = {ld_ratio:.2f})")
-
-            st.markdown("---")
+                st.warning(f"⚠️ Deep Beam (L/D={ld_ratio:.2f})")
             
-            # Load Selection Logic
+            st.markdown("---")
             st.markdown("##### 📥 Shear Load Input")
             beam_shear_cap = calculate_beam_shear_capacity(beam, Fy, method)
             v_75_percent = 0.75 * beam_shear_cap
@@ -118,18 +149,12 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                                  horizontal=True)
             
             if "Auto" in load_mode:
-                load_label = "Va (ASD)" if method == "ASD" else "Vu (LRFD)"
-                st.info(f"ℹ️ **Beam Capacity:** {beam_shear_cap:,.0f} kg")
+                load_label = "Va" if method == "ASD" else "Vu"
+                st.info(f"ℹ️ Beam Cap: {beam_shear_cap:,.0f} kg")
                 Vu_load = v_75_percent
-                st.markdown(f"""
-                <div style="padding:10px; background-color:#e8f4f8; border-radius:5px; border:1px solid #b8daff;">
-                    <b>Design Load ({load_label}):</b> <br>
-                    <span style="font-size:20px; color:#004085; font-weight:bold;">{Vu_load:,.0f} kg</span>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"<div style='padding:8px; background:#e8f4f8; border-radius:4px;'><b>Design Load:</b> {Vu_load:,.0f} kg</div>", unsafe_allow_html=True)
             else:
-                load_label = "Va (kg)" if method == "ASD" else "Vu (kg)"
-                Vu_load = st.number_input(load_label, value=5000.0, step=500.0)
+                Vu_load = st.number_input(f"Design Load ({method}) [kg]", value=5000.0, step=500.0)
             
             mat_grade = st.selectbox("Plate Mat.", ["A36", "SS400", "A572-50"])
 
@@ -139,7 +164,6 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             bolt_grade = c2.selectbox("Grade", ["A325", "A490", "Gr.8.8"])
             d_b = float(bolt_dia.replace("M",""))
             
-            # Geometry Input
             pitch = st.number_input("Pitch (s)", value=int(3*d_b), min_value=int(2.67*d_b))
             lev = st.number_input("V-Edge (Lev)", value=int(1.5*d_b))
             
@@ -165,7 +189,8 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             
             pl_h = (2 * lev) + ((n_rows - 1) * pitch)
 
-    # --- CALCULATION LINK ---
+    # --- CALCULATION ---
+    # 1. Main Checks
     calc_inputs = {
         'method': method,
         'load': Vu_load,
@@ -178,59 +203,63 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     }
     
     results = calc.calculate_shear_tab(calc_inputs)
+    
+    # 2. [NEW] Add Eccentric Weld Check Manually
+    # Eccentricity e = Distance from Weld Line to Bolt Line
+    eccentricity = pl_w - leh 
+    if eccentricity < 0: eccentricity = 0 # Safety
+    
+    weld_ecc_res = calculate_eccentric_weld(Vu_load, eccentricity, pl_h, weld_sz, method)
+    results['weld_eccentric'] = weld_ecc_res # Inject into results dict
+
+    # 3. Re-evaluate Summary Status
+    # หาค่า Ratio สูงสุดใหม่ รวมตัวที่เพิ่งเพิ่มเข้าไป
+    all_ratios = [results[k]['ratio'] for k in results if 'ratio' in results[k] and k != 'summary']
+    max_ratio = max(all_ratios)
+    
+    # Update Summary Dict
+    results['summary']['utilization'] = max_ratio
+    if max_ratio > 1.0:
+        results['summary']['status'] = "FAIL"
+    
+    # หาตัวที่ Gov ใหม่ (เผื่อ Weld Eccentric เป็นตัว Gov)
+    if weld_ecc_res['ratio'] == max_ratio:
+        results['summary']['gov_mode'] = "Weld (Eccentric)"
+        results['summary']['gov_capacity'] = weld_ecc_res['capacity']
+
     summary = results['summary']
 
     # --- DISPLAY OUTPUT ---
     with col_viz:
-        # Status Box
         status_color = "#2ecc71" if summary['status'] == "PASS" else "#e74c3c"
         header_text = summary['status']
         if is_deep_beam:
-             header_text += " (⚠️ Deep Beam Warning)"
+             header_text += " (Deep Beam Alert)"
              if summary['status'] == "PASS": status_color = "#f39c12" 
         
         st.markdown(f"""
         <div style="background-color: {status_color}; padding: 15px; border-radius: 8px; color: white; margin-bottom: 10px;">
             <h3 style="margin:0;">{header_text} (Ratio: {summary['utilization']:.2f})</h3>
             <p style="margin:0;">Load: {Vu_load:,.0f} kg | Capacity: {summary['gov_capacity']:,.0f} kg</p>
-            <small>Governing Mode: {summary['gov_mode']} ({method})</small>
+            <small>Governing: {summary['gov_mode']}</small>
         </div>
         """, unsafe_allow_html=True)
         
         tab1, tab2, tab3 = st.tabs(["🧊 3D Model & Constr.", "📝 Detailed Calc.", "📊 Exec. Summary"])
         
-        # === TAB 1: 3D MODEL & CONSTRUCTION LABELS ===
+        # === TAB 1 ===
         with tab1:
-            # AISC Min Checks
             min_e, min_s, pref_s = get_aisc_min_values(d_b)
-            
-            # Check Status
             chk_edge = "✅" if lev >= min_e else "❌ FAIL"
             chk_space = "✅" if pitch >= min_s else "❌ FAIL"
             
-            # [NEW] Construction Label Box
             st.markdown(f"""
             <div style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 10px; margin-bottom: 10px;">
-                <h5 style="margin:0; color:#495057;">👷 Construction Check (AISC J3.3 & J3.4)</h5>
+                <h5 style="margin:0; color:#495057;">👷 Construction Check (AISC J3.3)</h5>
                 <table style="width:100%; text-align:center; font-size:0.9em;">
-                    <tr style="background-color:#e9ecef;">
-                        <th>Parameter</th>
-                        <th>Actual Design</th>
-                        <th>AISC Minimum</th>
-                        <th>Status</th>
-                    </tr>
-                    <tr>
-                        <td style="text-align:left;"><b>Edge Dist. (Lev)</b></td>
-                        <td><b>{lev}</b> mm</td>
-                        <td>{min_e} mm</td>
-                        <td>{chk_edge}</td>
-                    </tr>
-                    <tr>
-                        <td style="text-align:left;"><b>Spacing (Pitch)</b></td>
-                        <td><b>{pitch}</b> mm</td>
-                        <td>{min_s} mm (Pref. {pref_s})</td>
-                        <td>{chk_space}</td>
-                    </tr>
+                    <tr style="background-color:#e9ecef;"><th>Check</th><th>Actual</th><th>Limit</th><th>Status</th></tr>
+                    <tr><td align="left">Edge Dist</td><td>{lev}</td><td>≥ {min_e}</td><td>{chk_edge}</td></tr>
+                    <tr><td align="left">Spacing</td><td>{pitch}</td><td>≥ {min_s}</td><td>{chk_space}</td></tr>
                 </table>
             </div>
             """, unsafe_allow_html=True)
@@ -244,97 +273,46 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                 fig = create_connection_figure(beam_dims, plate_dims, bolt_dims, config)
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.error(f"❌ Error Plotting: {e}")
+                st.error(f"Error Plotting: {e}")
 
-        # === TAB 2: DETAILED CALCULATION ===
+        # === TAB 2 ===
         with tab2:
-            st.markdown(f"#### 📐 Engineering Calculation Report ({method})")
+            st.markdown(f"#### 📐 Calculation Report ({method})")
             
-            if is_deep_beam:
-                st.warning(f"**Deep Beam Alert:** L/D = {ld_ratio:.2f} (< 4.0). Verify with STM.")
-            
-            modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
+            # เรียงลำดับใหม่ ให้ Weld Eccentric ขึ้นมาก่อนถ้ามัน Fail
+            modes = ['weld_eccentric', 'bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
             
             for mode in modes:
                 data = results.get(mode)
                 if data:
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
                     with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
-                        st.markdown(f"**Reference:** `{data.get('ref', 'AISC 360-16')}`")
-                        
-                        st.markdown("**1. Formula:**")
+                        st.markdown(f"**Ref:** `{data.get('ref', 'AISC 360-16')}`")
                         if 'latex_eq' in data: st.latex(data['latex_eq'])
-                        
-                        st.markdown("**2. Substitution:**")
                         if 'latex_sub' in data: st.latex(data['latex_sub'])
-                        
-                        st.markdown("**3. Parameters:**")
                         if 'calcs' in data:
                             for step in data['calcs']: st.markdown(f"- {step}")
                         
                         res_color = "green" if data['ratio'] <= 1.0 else "red"
                         sign = '≥' if data['ratio'] <= 1.0 else '<'
-                        cap_symbol = "Rn/Ω" if method == "ASD" else "φRn"
-                        
-                        st.markdown(f"""
-                        <div style="background-color: rgba(0,0,0,0.05); padding: 8px; border-radius: 4px; border-left: 4px solid {res_color}; margin-top: 10px;">
-                            <b>Answer:</b> {cap_symbol} = <b>{data['capacity']:,.0f} kg</b> {sign} Load ({Vu_load:,.0f} kg)
-                        </div>
-                        """, unsafe_allow_html=True)
+                        cap_txt = "Rn/Ω" if method == "ASD" else "φRn"
+                        st.markdown(f"<span style='color:{res_color}'><b>Check:</b> {cap_txt} = {data['capacity']:,.0f} {sign} {Vu_load:,.0f} kg</span>", unsafe_allow_html=True)
 
-        # === TAB 3: EXECUTIVE SUMMARY ===
+        # === TAB 3 ===
         with tab3:
-            st.markdown("### 📊 Design Specification & Verification Summary")
-            st.markdown("---")
-            
-            # PART 1: MATERIAL & SPECIFICATIONS
-            st.info("📌 1. Design Configuration (รายการประกอบแบบ)")
-            
+            st.markdown("### 📊 Engineering Summary")
+            st.info("📌 Design Configuration")
             sc1, sc2, sc3 = st.columns(3)
+            with sc1: st.markdown(f"**Beam:** {section_name}<br>D={bm_D:.0f} mm", unsafe_allow_html=True)
+            with sc2: st.markdown(f"**Bolts:** {n_rows}x M{d_b:.0f}<br>Pitch: {pitch}", unsafe_allow_html=True)
+            with sc3: st.markdown(f"**Plate:** {pl_h:.0f}x{pl_w}x{plate_t}<br>Weld: {weld_sz} mm", unsafe_allow_html=True)
             
-            with sc1:
-                st.markdown("##### 🏗️ Host Beam")
-                st.markdown(f"""
-                - **Section:** `{section_name}`
-                - **Depth:** {bm_D:.0f} mm
-                - **Mat:** {mat_grade}
-                """)
-                if is_deep_beam: st.error("⚠️ Deep Beam")
-                
-            with sc2:
-                st.markdown("##### 🔩 Bolts")
-                st.markdown(f"""
-                - **Size:** M{d_b:.0f} ({bolt_grade})
-                - **Qty:** {n_rows} Rows
-                - **Edge (Lev):** {lev} mm
-                - **Pitch (s):** {pitch} mm
-                """)
-                
-            with sc3:
-                st.markdown("##### ⬜ Plate & Weld")
-                st.markdown(f"""
-                - **Plate:** {pl_h:.0f} x {pl_w} x {plate_t} mm
-                - **Weld:** {weld_sz} mm
-                - **Mat:** {mat_grade}
-                """)
-
             st.markdown("---")
-            
-            # PART 2: ENGINEERING CHECKLIST
-            st.success("📌 2. Engineering Verification Checklist")
-            
+            st.success("📌 Check Results")
             summary_data = []
-            modes_chk = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
-            
-            for m in modes_chk:
+            for m in modes:
                 d = results.get(m)
                 if d:
-                    status_emoji = "✅ PASS" if d['ratio'] <= 1.0 else "❌ FAIL"
-                    summary_data.append({
-                        "Check Item": d['title'],
-                        "Ratio": f"{d['ratio']:.2f}",
-                        "Result": status_emoji
-                    })
-            
-            df_sum = pd.DataFrame(summary_data)
-            st.table(df_sum)
+                    emoji = "✅ PASS" if d['ratio'] <= 1.0 else "❌ FAIL"
+                    summary_data.append({"Item": d['title'], "Ratio": f"{d['ratio']:.2f}", "Result": emoji})
+            st.table(pd.DataFrame(summary_data))
