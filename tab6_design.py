@@ -18,19 +18,24 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
     max_n = int(((available_h - (2 * lev)) / pitch) + 1)
     return max(0, max_n)
 
+def get_material_Fu(Fy):
+    """ประมาณค่า Fu จาก Fy (สำหรับตรวจสอบ Bearing)"""
+    # SS400/A36 (Fy ~2400) -> Fu ~4000-4100
+    # SM520 (Fy ~3500-3600) -> Fu ~5000-5200
+    if Fy <= 2500: return 4000 # ksc (SS400)
+    elif Fy <= 3000: return 4500 # ksc (A572 Gr.50 approx)
+    else: return 5000 # ksc (SM520)
+
 def calculate_beam_shear_capacity(beam, Fy, method):
     d_mm = beam['D']
     tw_mm = beam.get('t1', 6.0)
     Aw = (d_mm * tw_mm) / 100.0 # cm2
     Vn = 0.6 * Fy * Aw # kg
-    
-    if method == "ASD":
-        v_cap = Vn / 1.67
-    else:
-        v_cap = 0.9 * Vn
-    return v_cap
+    if method == "ASD": return Vn / 1.67
+    else: return 0.9 * Vn
 
 def get_aisc_min_values(d_b):
+    """คืนค่า Min Edge, Min Spacing"""
     min_spacing = 2.67 * d_b
     pref_spacing = 3.0 * d_b
     
@@ -38,73 +43,82 @@ def get_aisc_min_values(d_b):
     elif d_b <= 20: min_edge = 26
     elif d_b <= 22: min_edge = 28
     elif d_b <= 24: min_edge = 30
-    elif d_b <= 27: min_edge = 34
     elif d_b <= 30: min_edge = 38
     else: min_edge = 1.25 * d_b 
-        
     return int(min_edge), round(min_spacing, 1), round(pref_spacing, 1)
 
-# [NEW] Calculate Eccentric Weld Stress (Elastic Method)
+def get_min_weld_size(part_t_mm):
+    """AISC Table J2.4 Min Size of Fillet Welds"""
+    if part_t_mm <= 6: return 3
+    elif part_t_mm <= 13: return 5
+    elif part_t_mm <= 19: return 6
+    else: return 8
+
+# [Logic เดิม] Calculate Eccentric Weld Stress
 def calculate_eccentric_weld(load_kg, e_mm, L_mm, weld_sz_mm, method):
-    # 1. Geometry & Properties
     e_cm = e_mm / 10.0
     L_cm = L_mm / 10.0
     w_cm = weld_sz_mm / 10.0
-    
-    # Effective Throat (0.707 * size)
     te = 0.707 * w_cm
     
-    # Section Properties (Double Fillet Weld treated as lines)
-    # Area of weld throat
-    Aw = 2 * (te * L_cm)  # cm2
+    Aw = 2 * (te * L_cm)
+    Sw = (te * (L_cm**2)) / 3.0 
     
-    # Section Modulus (Sw) for 2 vertical lines
-    # I = 2 * (te * L^3 / 12)
-    # c = L / 2
-    # Sw = I / c = 2 * (te * L^2 / 6) = te * L^2 / 3
-    Sw = (te * (L_cm**2)) / 3.0 # cm3
+    fv = load_kg / Aw 
+    Moment = load_kg * e_cm 
+    fb = Moment / Sw 
+    fr = math.sqrt(fv**2 + fb**2) 
     
-    # 2. Stresses
-    # Direct Shear (fv)
-    fv = load_kg / Aw # ksc
-    
-    # Bending Stress due to Eccentricity (fb) = M / Sw
-    Moment = load_kg * e_cm # kg-cm
-    fb = Moment / Sw # ksc
-    
-    # Resultant Stress (Vector Sum)
-    fr = math.sqrt(fv**2 + fb**2) # ksc
-    
-    # 3. Capacity Limit (E70XX Electrode)
-    Fexx = 4921 # ksc (70 ksi)
-    Fnw = 0.6 * Fexx # Nominal Strength
+    Fexx = 4921 # 70 ksi
+    Fnw = 0.6 * Fexx
     
     if method == "ASD":
-        # Omega = 2.00
         F_limit = Fnw / 2.00
-        cap_load = (F_limit / fr) * load_kg # Back-calculate capacity load
     else:
-        # Phi = 0.75
         F_limit = 0.75 * Fnw
-        cap_load = (F_limit / fr) * load_kg
         
-    ratio = fr / F_limit
+    cap_load = (F_limit / fr) * load_kg if fr > 0 else 0
+    ratio = fr / F_limit if F_limit > 0 else 999
     
-    # Prepare Detail Object
     return {
-        'title': 'Eccentric Weld Check',
+        'title': 'Weld (Eccentric Check)',
         'capacity': cap_load,
         'ratio': ratio,
-        'ref': 'AISC Part 8 (Elastic Method)',
+        'ref': 'AISC Part 8 (Elastic Vector)',
         'latex_eq': r'f_r = \sqrt{f_v^2 + f_b^2} \leq \phi F_{nw}',
-        'latex_sub': fr'f_v = \frac{{P}}{{A_w}}, \quad f_b = \frac{{P \cdot e}}{{S_w}}',
+        'latex_sub': fr'f_v = {fv:.2f}, f_b = {fb:.2f} \text{{ (ksc)}}',
         'calcs': [
-            f"Eccentricity (e) = {e_mm} mm (Plate Width - Leh)",
-            f"Weld Length (L) = {L_mm} mm",
-            f"Direct Shear (fv) = {fv:.2f} ksc",
-            f"Bending Stress (fb) = {fb:.2f} ksc (Moment = {Moment:,.0f} kg-cm)",
-            f"Resultant Stress (fr) = {fr:.2f} ksc",
-            f"Limit Stress ({method}) = {F_limit:.2f} ksc"
+            f"Eccentricity (e) = {e_mm} mm",
+            f"Resultant Stress = {fr:.2f} ksc (Limit {F_limit:.2f})"
+        ]
+    }
+
+# [NEW] Calculate Beam Web Bearing
+def calculate_web_bearing(load_kg, d_b, n_bolts, tw_mm, Fy, method):
+    Fu = get_material_Fu(Fy)
+    # Rn = 2.4 * d * t * Fu (Consider deformation at bolt hole)
+    # Note: Assuming standard edge distance on beam web is sufficient
+    rn_per_bolt = 2.4 * (d_b/10.0) * (tw_mm/10.0) * Fu 
+    Rn_total = rn_per_bolt * n_bolts
+    
+    if method == "ASD":
+        cap = Rn_total / 2.00 # Omega = 2.00
+    else:
+        cap = 0.75 * Rn_total # Phi = 0.75
+        
+    ratio = load_kg / cap
+    
+    return {
+        'title': 'Bearing on Beam Web',
+        'capacity': cap,
+        'ratio': ratio,
+        'ref': 'AISC J3.10 (Bearing)',
+        'latex_eq': r'R_n = n \times 2.4 d t_w F_u',
+        'calcs': [
+            f"Beam Web (Tw) = {tw_mm} mm",
+            f"Beam Fu (Est.) = {Fu} ksc",
+            f"Nominal/Bolt = {rn_per_bolt:,.0f} kg",
+            f"Total Capacity = {cap:,.0f} kg"
         ]
     }
 
@@ -133,7 +147,7 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     with col_input:
         with st.expander("1️⃣ Beam Info & Load Verification", expanded=True):
             st.info(f"📌 **Current Beam:** `{section_name}`")
-            st.markdown(f"- **Depth:** {bm_D:.0f} mm | **Span:** {span_m} m")
+            st.markdown(f"- **D:** {bm_D:.0f} mm | **Tw:** {bm_Tw} mm")
 
             if ld_ratio < 4.0:
                 is_deep_beam = True
@@ -190,40 +204,38 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             pl_h = (2 * lev) + ((n_rows - 1) * pitch)
 
     # --- CALCULATION ---
-    # 1. Main Checks
+    # 1. Standard Checks (Plate, Bolt, Weld Shear)
     calc_inputs = {
-        'method': method,
-        'load': Vu_load,
+        'method': method, 'load': Vu_load,
         'beam_tw': bm_Tw, 'beam_mat': mat_grade,
         'plate_t': plate_t, 'plate_h': pl_h, 'plate_mat': mat_grade,
         'bolt_dia': d_b, 'bolt_grade': bolt_grade,
         'n_rows': n_rows, 'pitch': pitch,
-        'lev': lev, 'leh': leh, 
-        'weld_sz': weld_sz
+        'lev': lev, 'leh': leh, 'weld_sz': weld_sz
     }
-    
     results = calc.calculate_shear_tab(calc_inputs)
     
-    # 2. [NEW] Add Eccentric Weld Check Manually
-    # Eccentricity e = Distance from Weld Line to Bolt Line
-    eccentricity = pl_w - leh 
-    if eccentricity < 0: eccentricity = 0 # Safety
-    
+    # 2. [ADDED] Eccentric Weld Check
+    eccentricity = max(0, pl_w - leh)
     weld_ecc_res = calculate_eccentric_weld(Vu_load, eccentricity, pl_h, weld_sz, method)
-    results['weld_eccentric'] = weld_ecc_res # Inject into results dict
+    results['weld_eccentric'] = weld_ecc_res
 
-    # 3. Re-evaluate Summary Status
-    # หาค่า Ratio สูงสุดใหม่ รวมตัวที่เพิ่งเพิ่มเข้าไป
+    # 3. [ADDED] Beam Web Bearing Check (CRITICAL)
+    web_bearing_res = calculate_web_bearing(Vu_load, d_b, n_rows, bm_Tw, Fy, method)
+    results['web_bearing'] = web_bearing_res
+
+    # 4. Re-evaluate Summary
     all_ratios = [results[k]['ratio'] for k in results if 'ratio' in results[k] and k != 'summary']
     max_ratio = max(all_ratios)
     
-    # Update Summary Dict
     results['summary']['utilization'] = max_ratio
-    if max_ratio > 1.0:
-        results['summary']['status'] = "FAIL"
+    results['summary']['status'] = "FAIL" if max_ratio > 1.0 else "PASS"
     
-    # หาตัวที่ Gov ใหม่ (เผื่อ Weld Eccentric เป็นตัว Gov)
-    if weld_ecc_res['ratio'] == max_ratio:
+    # Update Governing Mode
+    if web_bearing_res['ratio'] == max_ratio:
+        results['summary']['gov_mode'] = "Beam Web Bearing"
+        results['summary']['gov_capacity'] = web_bearing_res['capacity']
+    elif weld_ecc_res['ratio'] == max_ratio:
         results['summary']['gov_mode'] = "Weld (Eccentric)"
         results['summary']['gov_capacity'] = weld_ecc_res['capacity']
 
@@ -231,10 +243,11 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
 
     # --- DISPLAY OUTPUT ---
     with col_viz:
+        # Header Status
         status_color = "#2ecc71" if summary['status'] == "PASS" else "#e74c3c"
         header_text = summary['status']
         if is_deep_beam:
-             header_text += " (Deep Beam Alert)"
+             header_text += " (Deep Beam Warning)"
              if summary['status'] == "PASS": status_color = "#f39c12" 
         
         st.markdown(f"""
@@ -245,22 +258,34 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2, tab3 = st.tabs(["🧊 3D Model & Constr.", "📝 Detailed Calc.", "📊 Exec. Summary"])
+        tab1, tab2, tab3 = st.tabs(["🏗️ Constr. Check (Site)", "📝 Engineering Calc", "📊 Summary"])
         
-        # === TAB 1 ===
+        # === TAB 1: SITE & CONSTRUCTION CHECK ===
         with tab1:
+            # 1. AISC Min Geometry
             min_e, min_s, pref_s = get_aisc_min_values(d_b)
-            chk_edge = "✅" if lev >= min_e else "❌ FAIL"
-            chk_space = "✅" if pitch >= min_s else "❌ FAIL"
             
+            # 2. Min Weld Size (AISC J2.4)
+            # Compare with Thicker Part (Usually Plate, but safest to check Plate T)
+            req_min_weld = get_min_weld_size(plate_t)
+            chk_weld = "✅" if weld_sz >= req_min_weld else f"❌ Min {req_min_weld}mm"
+            
+            # 3. Rotation Check (Ductility)
+            # Rule: t_plate <= db/2 + 2mm
+            max_t_rot = (d_b / 2) + 2.0
+            chk_rot = "✅" if plate_t <= max_t_rot else f"⚠️ Rigid ({plate_t} > {max_t_rot}mm)"
+
             st.markdown(f"""
             <div style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 10px; margin-bottom: 10px;">
-                <h5 style="margin:0; color:#495057;">👷 Construction Check (AISC J3.3)</h5>
+                <h5 style="margin:0; color:#495057;">👷 Construction & Ductility Check</h5>
                 <table style="width:100%; text-align:center; font-size:0.9em;">
-                    <tr style="background-color:#e9ecef;"><th>Check</th><th>Actual</th><th>Limit</th><th>Status</th></tr>
-                    <tr><td align="left">Edge Dist</td><td>{lev}</td><td>≥ {min_e}</td><td>{chk_edge}</td></tr>
-                    <tr><td align="left">Spacing</td><td>{pitch}</td><td>≥ {min_s}</td><td>{chk_space}</td></tr>
+                    <tr style="background-color:#e9ecef;"><th>Check Item</th><th>Actual</th><th>Limit/Req.</th><th>Status</th></tr>
+                    <tr><td align="left">Edge Dist.</td><td>{lev} mm</td><td>≥ {min_e} mm</td><td>{"✅" if lev>=min_e else "❌ FAIL"}</td></tr>
+                    <tr><td align="left">Spacing</td><td>{pitch} mm</td><td>≥ {min_s} mm</td><td>{"✅" if pitch>=min_s else "❌ FAIL"}</td></tr>
+                    <tr style="border-top:2px solid #ddd;"><td align="left"><b>Weld Size</b></td><td><b>{weld_sz} mm</b></td><td>≥ {req_min_weld} mm</td><td>{chk_weld}</td></tr>
+                    <tr><td align="left"><b>Rotation</b> (Flexibility)</td><td>t={plate_t} mm</td><td>Max {max_t_rot:.1f} mm</td><td>{chk_rot}</td></tr>
                 </table>
+                <small style="color:gray;">*Weld Size based on AISC Table J2.4 (Thicker Part)<br>*Rotation check ensures simple shear behavior.</small>
             </div>
             """, unsafe_allow_html=True)
 
@@ -275,21 +300,23 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             except Exception as e:
                 st.error(f"Error Plotting: {e}")
 
-        # === TAB 2 ===
+        # === TAB 2: DETAILED CALC ===
         with tab2:
-            st.markdown(f"#### 📐 Calculation Report ({method})")
+            st.markdown(f"#### 📐 Engineering Calculation ({method})")
             
-            # เรียงลำดับใหม่ ให้ Weld Eccentric ขึ้นมาก่อนถ้ามัน Fail
-            modes = ['weld_eccentric', 'bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
+            # เรียงลำดับ: เช็ค Bearing Web ก่อนเลย เพราะมักจะตายที่ตรงนี้
+            modes = ['web_bearing', 'weld_eccentric', 'bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
             
             for mode in modes:
                 data = results.get(mode)
                 if data:
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
-                    with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
-                        st.markdown(f"**Ref:** `{data.get('ref', 'AISC 360-16')}`")
+                    # Highlight Web Bearing specifically
+                    title_style = "color:#d9534f; font-weight:bold;" if mode == 'web_bearing' and data['ratio'] > 1.0 else ""
+                    
+                    with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=(data['ratio']>1.0)):
+                        st.markdown(f"**Ref:** `{data.get('ref', '-')}`")
                         if 'latex_eq' in data: st.latex(data['latex_eq'])
-                        if 'latex_sub' in data: st.latex(data['latex_sub'])
                         if 'calcs' in data:
                             for step in data['calcs']: st.markdown(f"- {step}")
                         
@@ -298,17 +325,23 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                         cap_txt = "Rn/Ω" if method == "ASD" else "φRn"
                         st.markdown(f"<span style='color:{res_color}'><b>Check:</b> {cap_txt} = {data['capacity']:,.0f} {sign} {Vu_load:,.0f} kg</span>", unsafe_allow_html=True)
 
-        # === TAB 3 ===
+        # === TAB 3: SUMMARY ===
         with tab3:
             st.markdown("### 📊 Engineering Summary")
-            st.info("📌 Design Configuration")
-            sc1, sc2, sc3 = st.columns(3)
-            with sc1: st.markdown(f"**Beam:** {section_name}<br>D={bm_D:.0f} mm", unsafe_allow_html=True)
-            with sc2: st.markdown(f"**Bolts:** {n_rows}x M{d_b:.0f}<br>Pitch: {pitch}", unsafe_allow_html=True)
-            with sc3: st.markdown(f"**Plate:** {pl_h:.0f}x{pl_w}x{plate_t}<br>Weld: {weld_sz} mm", unsafe_allow_html=True)
             
-            st.markdown("---")
-            st.success("📌 Check Results")
+            # Show Critical Check (Web Bearing)
+            wb = results['web_bearing']
+            wb_status = "PASS" if wb['ratio'] <= 1.0 else "FAIL"
+            wb_color = "green" if wb_status == "PASS" else "red"
+            
+            st.markdown(f"""
+            <div style="padding:10px; border:1px solid {wb_color}; border-left: 5px solid {wb_color}; margin-bottom:15px; background:rgba(0,0,0,0.02)">
+                <strong style="color:{wb_color}">Critical Check: Beam Web Bearing</strong><br>
+                Beam Web Thickness: {bm_Tw} mm <br>
+                Status: <b>{wb_status}</b> (Ratio {wb['ratio']:.2f})
+            </div>
+            """, unsafe_allow_html=True)
+            
             summary_data = []
             for m in modes:
                 d = results.get(m)
