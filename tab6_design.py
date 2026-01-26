@@ -1,3 +1,4 @@
+#tab6_design.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -124,8 +125,8 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             st.markdown("#### 📐 Engineering Calculation Report (AISC LRFD)")
             st.markdown("---")
             
-            # Loop through modes
-            modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'weld']
+            # Loop through modes (Updated to include block_shear)
+            modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
             
             for mode in modes:
                 data = results.get(mode)
@@ -139,7 +140,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                         if 'latex_eq' in data:
                             st.latex(data['latex_eq'])
                         
-                        # 2. แสดงขั้นตอนการแทนค่า (แก้จุดที่ error ตรงนี้)
+                        # 2. แสดงขั้นตอนการแทนค่า
                         st.markdown("**Calculation Steps:**")
                         if 'calcs' in data:
                             for step in data['calcs']:
