@@ -23,16 +23,11 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # ----------------------------------------------------
     # 2. Extract Section Properties
     # ----------------------------------------------------
-    # Extract raw data
     Ix = props.get('Ix', 0)
     Iy = props.get('Iy', 0)
     
     # --- Mapping Definitions ---
-    # ใน Database SYS: 'Zx' มักหมายถึง Elastic Section Modulus (S ในตำรา AISC)
-    # เราจะ map ให้ตรงกับตัวแปรทางวิศวกรรมสากล
-    S_elastic = props.get('Zx', 0) 
-    
-    # Plastic Modulus (Z): ถ้าไม่มีใน DB ให้ประมาณค่า Z ≈ 1.1 * S
+    S_elastic = props.get('Zx', 0) # Zx in TH DB = S (Elastic) in AISC
     Z_plastic = props.get('Zy', 1.1 * S_elastic) 
 
     r_x = props.get('rx', 0)
@@ -50,7 +45,6 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
 
     # Torsional Constant (J)
     if props.get('Ix', 0) > 0:
-        # Fallback approximation for J if not in DB
         J = props.get('J', props['Ix'] * 0.02) 
     else:
         J = 1.0 
@@ -71,20 +65,18 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # ----------------------------------------------------
     # 3. Calculate LTB Limits (Lp, Lr)
     # ----------------------------------------------------
-    # Lp
     try:
         Lp = 1.76 * r_y * math.sqrt(E_ksc / Fy)
     except:
         Lp = 0
 
-    # Lr
     try:
         term1 = 1.95 * r_ts * (E_ksc / (0.7 * Fy))
         J_term = (J * 1.0) / (S_elastic * h0)
         inner_sqrt = math.sqrt((J_term)**2 + 6.76 * ((0.7 * Fy) / E_ksc)**2)
         Lr = term1 * math.sqrt(J_term + inner_sqrt)
     except:
-        Lr = Lp * 3.0 # Fallback
+        Lr = Lp * 3.0
 
     # ----------------------------------------------------
     # 4. Calculate Nominal Moment Capacity (Mn)
@@ -95,7 +87,6 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # Zone 1: Plastic
     if Lb_cm <= Lp:
         Mn = Mp
-        
     # Zone 2: Inelastic LTB
     elif Lb_cm <= Lr:
         if (Lr - Lp) != 0:
@@ -104,7 +95,6 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         else:
             Mn = Mp
         Mn = min(Mn, Mp)
-        
     # Zone 3: Elastic LTB
     else:
         try:
@@ -141,23 +131,14 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # ----------------------------------------------------
     # 6. Calculate Uniform Load Capacities (w)
     # ----------------------------------------------------
-    # 6.1 Moment Controlled
     if L_cm > 0:
         w_m = ((8 * M_des) / (L_cm**2)) * 100 
-    else:
-        w_m = 0
-
-    # 6.2 Shear Controlled
-    if L_cm > 0:
         w_s = ((2 * V_des) / L_cm) * 100 
-    else:
-        w_s = 0
-
-    # 6.3 Deflection Controlled
-    delta_allow = L_cm / def_limit
-    if L_cm > 0:
+        delta_allow = L_cm / def_limit
         w_d = ((delta_allow * 384 * E_ksc * Ix) / (5 * (L_cm**4))) * 100 
     else:
+        w_m = 0
+        w_s = 0
         w_d = 0
 
     # ----------------------------------------------------
@@ -173,7 +154,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     L_md = 0 
 
     # ----------------------------------------------------
-    # 8. Return Results (FIXED: Added Section Props)
+    # 8. Return Results (FIXED: Added 'Lb' and 'L' in meters)
     # ----------------------------------------------------
     return {
         # Capacities
@@ -184,14 +165,16 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         'V_des': V_des,   
         'Mn': Mn,         
         
-        # Section Props (Added to fix KeyError)
+        # Section Props
         'Sx': S_elastic, 
         'Zx': Z_plastic,
         'Ix': Ix,
         'Iy': Iy,
         
-        # Parameters
+        # Parameters (Added 'Lb' and 'L' for UI compatibility)
+        'L': L_m,           # [FIX] Added for UI
         'L_cm': L_cm,
+        'Lb': Lb_cm / 100.0, # [FIX] Added for UI (Metric Error)
         'Lb_cm': Lb_cm,   
         'E_ksc': E_ksc,
         
