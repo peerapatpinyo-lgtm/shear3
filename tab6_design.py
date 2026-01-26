@@ -1,4 +1,4 @@
-#tab6_design.py
+# tab6_design.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -21,7 +21,6 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
 # 🏗️ MAIN UI RENDERER
 # ==========================================
 def render_tab6(method, Fy, E_gpa, def_limit):
-    # Method = "ASD" or "LRFD" passed from app.py
     st.markdown(f"### 🏗️ Shear Plate Design ({method} Method)")
     col_input, col_viz = st.columns([1.3, 2.5])
 
@@ -42,7 +41,6 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             
             # Load & Materials
             c_load, c_mat = st.columns(2)
-            # Label change based on method
             load_label = "Va (kg)" if method == "ASD" else "Vu (kg)"
             Vu_load = c_load.number_input(load_label, value=5000.0, step=500.0)
             mat_grade = c_mat.selectbox("Mat.", ["A36", "SS400", "A572-50"])
@@ -82,7 +80,6 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             pl_h = (2 * lev) + ((n_rows - 1) * pitch)
 
     # --- 2. CALCULATION LINK ---
-    # Prepare inputs for calculator (Added 'method')
     calc_inputs = {
         'method': method,
         'load': Vu_load,
@@ -94,7 +91,6 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         'weld_sz': weld_sz
     }
     
-    # Run Calculation
     results = calc.calculate_shear_tab(calc_inputs)
     summary = results['summary']
 
@@ -113,7 +109,6 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         tab1, tab2 = st.tabs(["🧊 3D Model", "📝 Detailed Calc. Sheet"])
         
         with tab1:
-            # Prepare Data for Drawer
             beam_dims = {'H': bm_D, 'B': beam['B']*d_factor, 'Tw': bm_Tw, 'Tf': bm_Tf}
             bolt_dims = {'dia': d_b, 'n_rows': n_rows, 'pitch': pitch, 'lev': lev, 'leh_beam': leh}
             plate_dims = {'t': plate_t, 'w': pl_w, 'h': pl_h, 'weld_sz': weld_sz}
@@ -127,6 +122,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
 
         with tab2:
             st.markdown(f"#### 📐 Engineering Calculation Report ({method})")
+            st.caption("Step-by-step verification with variable substitution.")
             st.markdown("---")
             
             modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
@@ -134,29 +130,34 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             for mode in modes:
                 data = results.get(mode)
                 if data:
-                    # Header
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
+                    # ใช้ Expander
                     with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
                         
-                        # 1. LaTeX Eq
+                        # 1. Formula
+                        st.markdown("**1. Formula:**")
                         if 'latex_eq' in data:
                             st.latex(data['latex_eq'])
                         
-                        # 2. Steps
-                        st.markdown("**Calculation Steps:**")
+                        # 2. Substitution (New Feature)
+                        st.markdown("**2. Substitution:**")
+                        if 'latex_sub' in data:
+                            # แสดงผลการแทนค่า
+                            st.latex(data['latex_sub'])
+                        
+                        # 3. Parameters & Steps
+                        st.markdown("**3. Parameters:**")
                         if 'calcs' in data:
                             for step in data['calcs']:
                                 st.markdown(f"- {step}")
                         
-                        # 3. Result
+                        # 4. Final Answer
                         res_color = "green" if data['ratio'] <= 1.0 else "red"
                         sign = '≥' if data['ratio'] <= 1.0 else '<'
-                        
-                        # Dynamic Symbol display
                         cap_symbol = "Rn/Ω" if method == "ASD" else "φRn"
                         
                         st.markdown(f"""
-                        <div style="background-color: rgba(0,0,0,0.05); padding: 8px; border-radius: 4px; border-left: 4px solid {res_color};">
-                            <b>Result:</b> {cap_symbol} = {data['capacity']:.0f} kg {sign} Load ({Vu_load:.0f} kg)
+                        <div style="background-color: rgba(0,0,0,0.05); padding: 8px; border-radius: 4px; border-left: 4px solid {res_color}; margin-top: 10px;">
+                            <b>Answer:</b> {cap_symbol} = <b>{data['capacity']:,.0f} kg</b> {sign} Load ({Vu_load:,.0f} kg)
                         </div>
                         """, unsafe_allow_html=True)
