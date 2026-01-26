@@ -3,270 +3,286 @@ import math
 
 def check_geometry(inputs):
     """
-    ตรวจสอบมิติทางกายภาพตามมาตรฐาน AISC (Geometry Checks)
-    คืนค่า: list ของ error messages (ถ้าว่างแปลว่าผ่าน)
+    ตรวจสอบ Geometry (ระยะขอบ, ระยะห่าง) ตาม AISC Spec บท J3
     """
-    errors = []
-    warnings = []
+    msgs = []
     
     db = inputs['bolt_dia']
     pitch = inputs['pitch']
-    lev = inputs['lev'] # Vertical Edge
-    leh = inputs['leh_beam'] # Horizontal Edge
-    tp = inputs['plate_t']
-    weld = inputs['weld_sz']
-
-    # 1. Min Spacing (AISC J3.3) -> Standard 2.67d, Preferred 3d
-    min_spacing = 2.67 * db
-    if pitch < min_spacing:
-        errors.append(f"❌ Bolt Pitch ({pitch} mm) < Min Spacing ({min_spacing:.1f} mm)")
-
+    lev = inputs['lev']   # Vertical Edge (Plate)
+    leh = inputs['leh_beam'] # Horizontal Edge (Beam)
+    
+    # 1. Min Spacing (AISC J3.3)
+    # Standard = 2.67d, Preferred = 3d
+    min_spa = 2.67 * db
+    if pitch < min_spa:
+        msgs.append(f"❌ Bolt Pitch ({pitch} mm) < Min Allowed ({min_spa:.1f} mm)")
+        
     # 2. Min Edge Distance (AISC Table J3.4)
-    # Simplified lookup based on AISC Table J3.4
-    if db <= 16: min_edge = 22
-    elif db <= 20: min_edge = 26
-    elif db <= 22: min_edge = 28
-    elif db <= 24: min_edge = 30
-    elif db <= 30: min_edge = 38
-    else: min_edge = 1.25 * db
+    # Simplified logic for standard bolt sizes
+    if db <= 16: min_e = 22
+    elif db <= 20: min_e = 26
+    elif db <= 22: min_e = 28
+    elif db <= 24: min_e = 30
+    elif db <= 30: min_e = 38
+    else: min_e = 1.25 * db
     
-    if lev < min_edge:
-        errors.append(f"❌ Vertical Edge ({lev} mm) < Min Edge ({min_edge} mm)")
-    if leh < min_edge:
-        errors.append(f"❌ Horizontal Edge ({leh} mm) < Min Edge ({min_edge} mm)")
-
-    # 3. Weld Limitations (AISC J2.2b)
-    # Min weld size based on thinner part joined
-    # Assume connecting to beam web >= plate thickness usually
-    t_min_part = tp # conservative
-    if t_min_part <= 6: min_w = 3
-    elif t_min_part <= 13: min_w = 5
-    elif t_min_part <= 19: min_w = 6
-    else: min_w = 8
-    
-    if weld < min_w:
-        warnings.append(f"⚠️ Weld Size ({weld} mm) < AISC Min ({min_w} mm) for {t_min_part}mm plate")
-    
-    # Max weld size (AISC J2.2b): Max = t - 2mm (if t >= 6mm)
-    max_w = max(tp - 2, tp) 
-    if weld > max_w:
-        errors.append(f"❌ Weld Size ({weld} mm) > Max Allowed ({max_w} mm)")
-
-    return errors, warnings
+    if lev < min_e:
+        msgs.append(f"❌ Plate Vertical Edge ({lev} mm) < Min ({min_e} mm)")
+    if leh < min_e: # เช็คระยะขอบบนเอวคานด้วย
+        msgs.append(f"❌ Beam Web Horizontal Edge ({leh} mm) < Min ({min_e} mm)")
+        
+    return msgs
 
 def calculate_shear_tab(inputs):
     """
-    Ultimate Calculation Logic for Shear Tab Connection
-    Includes: Shear, Bearing, Block Shear, Weld Eccentricity, AND Plate Flexure.
+    คำนวณกำลังรับน้ำหนักครบทุก Limit States
     """
-    results = {}
+    res = {}
     
     # --- 0. Geometry Check ---
-    geo_errors, geo_warnings = check_geometry(inputs)
-    results['geometry'] = {'errors': geo_errors, 'warnings': geo_warnings}
-    
-    # If Critical Errors, stop calculation or flag it
-    if geo_errors:
-        results['critical_error'] = True
-        return results # Return early with errors
-    else:
-        results['critical_error'] = False
-
-    # --- 1. Unpack & Factors ---
-    method = inputs['method'] 
+    geo_errs = check_geometry(inputs)
+    if geo_errs:
+        return {'critical_error': True, 'errors': geo_errs}
+        
+    # --- 1. Parameters & Properties ---
+    method = inputs['method']
     Vu = inputs['load']
     
+    # Factors (ASD vs LRFD)
+    if method == "ASD":
+        # Omega Values
+        Om_v = 1.50 # Shear Yield
+        Om_r = 2.00 # Rupture / Bolts / Weld
+        Om_f = 1.67 # Flexure
+        
+        # Design Strings for LaTeX
+        txt_yield = r"\frac{R_n}{1.50}"
+        txt_rup   = r"\frac{R_n}{2.00}"
+        txt_flex  = r"\frac{M_n}{1.67}"
+        
+        # Numeric Factors for Calculation
+        f_yield = 1.0/1.50
+        f_rup   = 1.0/2.00
+        f_flex  = 1.0/1.67
+    else: # LRFD
+        # Phi Values
+        Phi_v = 1.00 # Shear Yield
+        Phi_r = 0.75 # Rupture / Bolts / Weld
+        Phi_f = 0.90 # Flexure
+        
+        # Design Strings
+        txt_yield = r"1.00 R_n"
+        txt_rup   = r"0.75 R_n"
+        txt_flex  = r"0.90 M_n"
+        
+        # Numeric
+        f_yield = 1.00
+        f_rup   = 0.75
+        f_flex  = 0.90
+
+    # Dimensions & Materials
     # Plate
     Fy_pl = 2500 if inputs['plate_mat'] == 'SS400' else (2530 if inputs['plate_mat'] == 'A36' else 3500)
     Fu_pl = 4100 if inputs['plate_mat'] == 'SS400' else (4080 if inputs['plate_mat'] == 'A36' else 4570)
-    tp_cm = inputs['plate_t'] / 10.0
-    h_pl_cm = inputs['plate_h'] / 10.0
+    tp = inputs['plate_t'] / 10.0 # cm
+    h_pl = inputs['plate_h'] / 10.0 # cm
     
     # Beam Web
     Fy_bm = inputs['beam_fy']
-    Fu_bm = 4000 if Fy_bm <= 2500 else 4500
-    tw_bm_cm = inputs['beam_tw'] / 10.0
+    Fu_bm = 4000 if Fy_bm <= 2500 else 4500 # Approx
+    tw_bm = inputs['beam_tw'] / 10.0 # cm
     
     # Bolt
-    db = inputs['bolt_dia']
-    db_cm = db / 10.0
-    Ab = (math.pi * db_cm**2) / 4
-    n_rows = inputs['n_rows']
+    db = inputs['bolt_dia'] / 10.0 # cm
+    Ab = (math.pi * db**2) / 4.0
+    n = inputs['n_rows']
     
-    # Factors
-    if method == "ASD":
-        omega = 1.67; omega_v = 1.50; omega_r = 2.00; omega_w = 2.00; omega_b = 1.67
-        phi = 1.0   ; phi_v = 1.0   ; phi_r = 1.0   ; phi_w = 1.0   ; phi_b = 1.0
-        txt = "1/\Omega"
+    # ==========================================
+    # CASE 1: BOLT SHEAR (AISC J3.6)
+    # ==========================================
+    # Fnv: A325=3720 ksc, A490=4690 ksc, Gr8.8 ~ A325
+    Fnv = 4690 if "A490" in inputs['bolt_grade'] else 3720
+    Rn_bolt = Fnv * Ab * n
+    Cap_bolt = Rn_bolt * f_rup
+    
+    res['bolt_shear'] = {
+        'title': '1. Bolt Shear Strength',
+        'ref': 'AISC Spec J3.6',
+        'eq_code': r"R_n = F_{nv} A_b n_b",
+        'subst': f"{Fnv} \\times {Ab:.2f} \\times {n} = {Rn_bolt:,.0f} kg",
+        'eq_design': r"\phi R_n" if method=="LRFD" else r"\frac{R_n}{\Omega}",
+        'design_val': Cap_bolt,
+        'ratio': Vu / Cap_bolt
+    }
+
+    # ==========================================
+    # CASE 2: BOLT BEARING (AISC J3.10)
+    # Check BOTH Plate and Beam Web -> Take Min
+    # ==========================================
+    # 2.1 Plate Bearing
+    lc_pl_edge = (inputs['lev']/10.0) - (db/2 + 0.1) # Hole margin approx 1mm
+    lc_pl_in = (inputs['pitch']/10.0) - (db + 0.2)
+    
+    # Capacity per bolt (Edge vs Inner)
+    rn_pl_e = min(1.2*lc_pl_edge*tp*Fu_pl, 2.4*db*tp*Fu_pl)
+    rn_pl_i = min(1.2*lc_pl_in*tp*Fu_pl, 2.4*db*tp*Fu_pl)
+    Rn_bear_pl = rn_pl_e + (rn_pl_i * (n - 1))
+    
+    # 2.2 Beam Web Bearing
+    lc_wb_edge = (inputs['leh_beam']/10.0) - (db/2 + 0.1)
+    rn_wb_e = min(1.2*lc_wb_edge*tw_bm*Fu_bm, 2.4*db*tw_bm*Fu_bm)
+    rn_wb_i = min(1.2*lc_pl_in*tw_bm*Fu_bm, 2.4*db*tw_bm*Fu_bm) # Pitch same for web
+    Rn_bear_wb = rn_wb_e + (rn_wb_i * (n - 1))
+    
+    # Governing
+    if Rn_bear_pl < Rn_bear_wb:
+        ctrl = "Plate Controls"
+        Rn_bear = Rn_bear_pl
+        subst_txt = f"Plate ({Rn_bear_pl:,.0f}) < Web ({Rn_bear_wb:,.0f})"
     else:
-        omega = 1.0 ; omega_v = 1.0 ; omega_r = 1.0 ; omega_w = 1.0 ; omega_b = 1.0
-        phi = 0.90  ; phi_v = 1.00  ; phi_r = 0.75  ; phi_w = 0.75  ; phi_b = 0.90
-        txt = "\phi"
+        ctrl = "Beam Web Controls"
+        Rn_bear = Rn_bear_wb
+        subst_txt = f"Web ({Rn_bear_wb:,.0f}) < Plate ({Rn_bear_pl:,.0f})"
+        
+    Cap_bear = Rn_bear * f_rup
 
-    # ==========================================
-    # CHECK 1: BOLT SHEAR
-    # ==========================================
-    Fnv = 4690 if "A490" in inputs['bolt_grade'] else (3720 if "A325" in inputs['bolt_grade'] else 2500)
-    Rn_bolt = Fnv * Ab * n_rows
-    cap_bolt = Rn_bolt / omega_r if method == "ASD" else phi_r * Rn_bolt
-    
-    results['bolt_shear'] = {
-        'title': '1. Bolt Shear',
-        'ref': 'AISC J3.6',
-        'eq': r'R_n = F_{nv} A_b n',
-        'sub': f'{Fnv} \\times {Ab:.2f} \\times {n_rows} = {Rn_bolt:,.0f}',
-        'cap': cap_bolt, 'ratio': Vu/cap_bolt
-    }
-
-    # ==========================================
-    # CHECK 2: BEARING (Governing)
-    # ==========================================
-    # Plate Bear
-    lc_pl = inputs['lev']/10.0 - (db_cm/2 + 0.1)
-    rn_pl = min(1.2*lc_pl*tp_cm*Fu_pl, 2.4*db_cm*tp_cm*Fu_pl) # Edge
-    rn_pl_in = min(1.2*(inputs['pitch']/10.0 - db_cm - 0.2)*tp_cm*Fu_pl, 2.4*db_cm*tp_cm*Fu_pl) # Inner
-    Rn_bear_pl = rn_pl + rn_pl_in*(n_rows-1)
-    
-    # Web Bear
-    lc_wb = inputs['leh_beam']/10.0 - (db_cm/2 + 0.1)
-    rn_wb = min(1.2*lc_wb*tw_bm_cm*Fu_bm, 2.4*db_cm*tw_bm_cm*Fu_bm)
-    rn_wb_in = min(1.2*(inputs['pitch']/10.0 - db_cm - 0.2)*tw_bm_cm*Fu_bm, 2.4*db_cm*tw_bm_cm*Fu_bm)
-    Rn_bear_wb = rn_wb + rn_wb_in*(n_rows-1)
-    
-    Rn_bear = min(Rn_bear_pl, Rn_bear_wb)
-    ctrl = "Plate" if Rn_bear_pl < Rn_bear_wb else "Beam Web"
-    cap_bear = Rn_bear / omega_r if method == "ASD" else phi_r * Rn_bear
-    
-    results['bearing'] = {
+    res['bearing'] = {
         'title': f'2. Bolt Bearing ({ctrl})',
-        'ref': 'AISC J3.10',
-        'eq': r'R_n = \sum \min(1.2 l_c t F_u, 2.4 d t F_u)',
-        'sub': f'Min({Rn_bear_pl:,.0f}, {Rn_bear_wb:,.0f})',
-        'cap': cap_bear, 'ratio': Vu/cap_bear
+        'ref': 'AISC Spec J3.10',
+        'eq_code': r"R_n = \sum \min(1.2 l_c t F_u, 2.4 d t F_u)",
+        'subst': subst_txt,
+        'eq_design': txt_rup, # Use string defined above
+        'design_val': Cap_bear,
+        'ratio': Vu / Cap_bear
     }
 
     # ==========================================
-    # CHECK 3: SHEAR YIELD (PLATE)
+    # CASE 3: SHEAR YIELDING (AISC J4.2)
+    # Plate Only (Web usually governed by beam shear)
     # ==========================================
-    Ag = h_pl_cm * tp_cm
+    Ag = h_pl * tp
     Rn_y = 0.60 * Fy_pl * Ag
-    cap_y = Rn_y / omega_v if method == "ASD" else phi_v * Rn_y
+    Cap_y = Rn_y * f_yield
     
-    results['shear_yield'] = {
-        'title': '3. Plate Shear Yield',
-        'ref': 'AISC J4.2',
-        'eq': r'R_n = 0.60 F_y A_g',
-        'sub': f'0.6 \\times {Fy_pl} \\times {Ag:.2f} = {Rn_y:,.0f}',
-        'cap': cap_y, 'ratio': Vu/cap_y
+    res['shear_yield'] = {
+        'title': '3. Plate Shear Yielding',
+        'ref': 'AISC Spec J4.2',
+        'eq_code': r"R_n = 0.60 F_y A_g",
+        'subst': f"0.60 \\times {Fy_pl} \\times {Ag:.2f} = {Rn_y:,.0f} kg",
+        'eq_design': txt_yield,
+        'design_val': Cap_y,
+        'ratio': Vu / Cap_y
     }
 
     # ==========================================
-    # CHECK 4: SHEAR RUPTURE (PLATE)
+    # CASE 4: SHEAR RUPTURE (AISC J4.2)
     # ==========================================
-    d_hole = db_cm + 0.2
-    Anv = Ag - (n_rows * d_hole * tp_cm)
+    d_hole = db + 0.2
+    Anv = Ag - (n * d_hole * tp)
     Rn_rup = 0.60 * Fu_pl * Anv
-    cap_rup = Rn_rup / omega_r if method == "ASD" else phi_r * Rn_rup
+    Cap_rup = Rn_rup * f_rup
     
-    results['shear_rup'] = {
+    res['shear_rup'] = {
         'title': '4. Plate Shear Rupture',
-        'ref': 'AISC J4.2',
-        'eq': r'R_n = 0.60 F_u A_{nv}',
-        'sub': f'0.6 \\times {Fu_pl} \\times {Anv:.2f} = {Rn_rup:,.0f}',
-        'cap': cap_rup, 'ratio': Vu/cap_rup
+        'ref': 'AISC Spec J4.2',
+        'eq_code': r"R_n = 0.60 F_u A_{nv}",
+        'subst': f"0.60 \\times {Fu_pl} \\times {Anv:.2f} = {Rn_rup:,.0f} kg",
+        'eq_design': txt_rup,
+        'design_val': Cap_rup,
+        'ratio': Vu / Cap_rup
+    }
+    
+    # ==========================================
+    # CASE 5: BLOCK SHEAR (AISC J4.3)
+    # Plate U-Shape Tearout
+    # ==========================================
+    # Geometry
+    leh_pl = (inputs['plate_w']/10.0) - (inputs['leh_beam']/10.0)
+    Ant = (leh_pl - 0.5*d_hole) * tp
+    Agv = ((n-1)*(inputs['pitch']/10.0) + (inputs['lev']/10.0)) * tp
+    Anv_bs = Agv - ((n-0.5)*d_hole * tp)
+    
+    Rn_bs_1 = 0.6*Fu_pl*Anv_bs + 1.0*Fu_pl*Ant # Fracture dominant
+    Rn_bs_2 = 0.6*Fy_pl*Agv + 1.0*Fu_pl*Ant    # Yield dominant
+    Rn_bs = min(Rn_bs_1, Rn_bs_2)
+    Cap_bs = Rn_bs * f_rup
+    
+    res['block_shear'] = {
+        'title': '5. Block Shear Rupture',
+        'ref': 'AISC Spec J4.3',
+        'eq_code': r"R_n = \min(0.6 F_u A_{nv} + U_{bs} F_u A_{nt}, ...)",
+        'subst': f"Min({Rn_bs_1:,.0f}, {Rn_bs_2:,.0f}) = {Rn_bs:,.0f} kg",
+        'eq_design': txt_rup,
+        'design_val': Cap_bs,
+        'ratio': Vu / Cap_bs
     }
 
     # ==========================================
-    # CHECK 5: BLOCK SHEAR
+    # CASE 6: PLATE FLEXURE (AISC Part 9/15)
+    # Due to Eccentricity (Yielding & Rupture)
     # ==========================================
-    leh_pl = (inputs['plate_w']/10.0) - (inputs['leh_beam']/10.0)
-    Ant = (leh_pl - 0.5*d_hole) * tp_cm
-    Agv = ((n_rows-1)*(inputs['pitch']/10.0) + (inputs['lev']/10.0)) * tp_cm
-    Anv_bs = Agv - ((n_rows-0.5)*d_hole*tp_cm)
+    ex = (inputs['plate_w']/10.0) - leh_pl # Distance Weld to Bolt Line
+    Mu = Vu * ex
     
-    Rn_bs = min(0.6*Fu_pl*Anv_bs + 1.0*Fu_pl*Ant, 0.6*Fy_pl*Agv + 1.0*Fu_pl*Ant)
-    cap_bs = Rn_bs / omega_r if method == "ASD" else phi_r * Rn_bs
+    # 6.1 Yielding
+    Z_gross = (tp * h_pl**2) / 4.0
+    Mn_y = Fy_pl * Z_gross
+    Cap_my = Mn_y * f_flex
     
-    results['block_shear'] = {
-        'title': '5. Block Shear',
-        'ref': 'AISC J4.3',
-        'eq': r'R_n = \min(0.6 F_u A_{nv} + U_{bs} F_u A_{nt}, ...)',
-        'sub': f'Min(...) = {Rn_bs:,.0f}',
-        'cap': cap_bs, 'ratio': Vu/cap_bs
+    # 6.2 Rupture (Approximate Z_net)
+    Z_net = Z_gross * (Anv / Ag) # Simplified conservative
+    Mn_r = Fu_pl * Z_net
+    Cap_mr = Mn_r * f_flex
+    
+    # Governing Moment Cap
+    Cap_m = min(Cap_my, Cap_mr)
+    # Convert Moment Cap back to Load Cap for display consistency
+    Cap_flex_load = Cap_m / ex if ex > 0 else 999999
+    
+    res['plate_flex'] = {
+        'title': '6. Plate Flexure (Eccentricity)',
+        'ref': 'AISC Manual Part 15',
+        'eq_code': r"M_n = \min(F_y Z_{gross}, F_u Z_{net})",
+        'subst': f"M_u = {Mu:,.0f} kg-cm (e={ex:.1f}cm)",
+        'eq_design': txt_flex,
+        'design_val': Cap_flex_load,
+        'ratio': Vu / Cap_flex_load
     }
+
+    # ==========================================
+    # CASE 7: WELD STRENGTH (AISC Part 8)
+    # Eccentric Method (Elastic Vector)
+    # ==========================================
+    w_sz = inputs['weld_sz'] / 10.0
+    te = 0.707 * w_sz
+    Lw = h_pl
     
-    # ==========================================
-    # CHECK 6: WELD (ECCENTRIC)
-    # ==========================================
-    # Using Elastic Method (Conservative & Traceable)
-    ex = (inputs['plate_w']/10.0) - leh_pl # Distance weld to bolt line
-    te = 0.707 * (inputs['weld_sz']/10.0)
-    Lw = h_pl_cm
+    # Section Properties of Weld Group (Line)
     Aw = 2 * Lw * te
-    Sw = (2 * te * Lw**2) / 6.0 # Section Modulus of weld line
+    Sw = (2 * te * Lw**2) / 6.0
     
+    # Stresses
     fv = Vu / Aw
     fb = (Vu * ex) / Sw
     fr = math.sqrt(fv**2 + fb**2)
     
-    Fexx = 4920
+    # Limit
+    Fexx = 4920 # E70
     Fnw = 0.60 * Fexx
-    Fall = Fnw / omega_w if method == "ASD" else phi_w * Fnw
-    ratio_w = fr / Fall
-    cap_w = Vu / ratio_w if ratio_w > 0 else 999999
+    F_allow = Fnw * f_rup # Use same Phi/Omega as rupture/bolts
     
-    results['weld'] = {
-        'title': '6. Weld Strength (Eccentric)',
-        'ref': 'AISC Part 8',
-        'eq': r'f_r = \sqrt{f_v^2 + f_b^2} \le \phi F_{nw}',
-        'sub': f'e={ex:.1f}cm, f_r={fr:.1f} ksc, F_{{all}}={Fall:,.0f}',
-        'cap': cap_w, 'ratio': ratio_w
+    ratio_w = fr / F_allow
+    Cap_weld_equiv = Vu / ratio_w if ratio_w > 0 else 999999
+    
+    res['weld'] = {
+        'title': '7. Weld Strength (Eccentric)',
+        'ref': 'AISC Manual Part 8',
+        'eq_code': r"f_r = \sqrt{f_v^2 + f_b^2} \leq \phi F_{nw}",
+        'subst': f"f_r = {fr:.2f} ksc (Allow: {F_allow:.0f})",
+        'eq_design': txt_rup, # Generic phi/omega label
+        'design_val': Cap_weld_equiv,
+        'ratio': ratio_w
     }
 
-    # ==========================================
-    # CHECK 7: PLATE FLEXURE (BENDING) - NEW!
-    # ==========================================
-    # The plate acts as a cantilever beam from weld to bolt line
-    # Eccentricity e = distance from weld to Center of Gravity of bolts
-    # Moment Mu = Vu * e
-    
-    Mu = Vu * ex # kg-cm
-    
-    # 7.1 Flexural Yielding (Mn = Fy * Z) -> Z of rectangular plate = t*h^2 / 4
-    Z_gross = (tp_cm * h_pl_cm**2) / 4.0
-    Mn_y = Fy_pl * Z_gross
-    cap_m_y = Mn_y / omega if method == "ASD" else phi_b * Mn_y
-    load_cap_my = cap_m_y / ex if ex > 0 else 999999
-    
-    results['flex_yield'] = {
-        'title': '7. Plate Flexural Yielding',
-        'ref': 'AISC Manual Part 15 / F11',
-        'eq': r'M_n = F_y Z_{gross}',
-        'sub': f'Z={Z_gross:.1f} cm^3, M_n={Mn_y:,.0f} kg-cm',
-        'cap': load_cap_my, 'ratio': Vu/load_cap_my
-    }
-    
-    # 7.2 Flexural Rupture (Mn = Fu * S_net)
-    # S_net = I_net / c
-    # This is complex to calc exactly, used simplified approach:
-    # S_net approx = S_gross - (Sum of holes * dist^2 ...)
-    # Simplified conservative: S_net = (t * (h - n*d_hole)^2) / 6 (Approximation)
-    # Better Approx: Deduct holes from Section Modulus
-    S_gross = (tp_cm * h_pl_cm**2) / 6.0
-    # Deduct inertia of holes? Let's use simplified Z_net for Plastic or S_net for Elastic?
-    # AISC Part 15 says check Rupture on S_net.
-    # Let's use conservative Z_net approx = Z_gross * (Anv/Ag)
-    Z_net = Z_gross * (Anv / Ag) 
-    Mn_rup = Fu_pl * Z_net
-    cap_m_r = Mn_rup / omega if method == "ASD" else phi_b * Mn_rup
-    load_cap_mr = cap_m_r / ex if ex > 0 else 999999
-    
-    results['flex_rup'] = {
-        'title': '8. Plate Flexural Rupture',
-        'ref': 'AISC Manual Part 15',
-        'eq': r'M_n = F_u Z_{net}',
-        'sub': f'Z_{{net}}={Z_net:.1f} cm^3, M_n={Mn_rup:,.0f}',
-        'cap': load_cap_mr, 'ratio': Vu/load_cap_mr
-    }
-
-    return results
+    return res
