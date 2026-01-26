@@ -19,26 +19,44 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
 
 def calculate_beam_shear_capacity(beam, Fy, method):
     """คำนวณ Shear Capacity ของคาน (Vn/Omega หรือ Phi*Vn) เพื่อใช้เป็นฐาน 75%"""
-    # 1. Properties
     d_mm = beam['D']
     tw_mm = beam.get('t1', 6.0)
+    Aw = (d_mm * tw_mm) / 100.0 # cm2
+    Vn = 0.6 * Fy * Aw # kg
     
-    # 2. Area Web (cm2)
-    Aw = (d_mm * tw_mm) / 100.0 # convert mm2 to cm2
-    
-    # 3. Nominal Shear Strength (Vn) = 0.6 * Fy * Aw
-    # (อ้างอิง AISC G2 สำหรับ I-shape members)
-    Vn = 0.6 * Fy * Aw # unit: kg
-    
-    # 4. Design Capacity
     if method == "ASD":
-        # Omega = 1.67 (Standard for Shear)
         v_cap = Vn / 1.67
     else:
-        # Phi = 0.9 (Standard for Shear usually 0.9 or 1.0 depending on cv, use 0.9 for conservative design)
         v_cap = 0.9 * Vn
-        
     return v_cap
+
+def get_aisc_min_values(d_b):
+    """
+    คืนค่า Minimum Edge Distance (AISC Table J3.3M) 
+    และ Minimum Spacing (AISC J3.3 Section 3.3)
+    """
+    # 1. Min Spacing (Standard = 2.67d, Preferred = 3d)
+    min_spacing = 2.67 * d_b
+    pref_spacing = 3.0 * d_b
+    
+    # 2. Min Edge Distance (AISC Table J3.3M)
+    # Mapping for Standard Holes
+    if d_b <= 16:
+        min_edge = 22
+    elif d_b <= 20:
+        min_edge = 26
+    elif d_b <= 22:
+        min_edge = 28
+    elif d_b <= 24:
+        min_edge = 30
+    elif d_b <= 27:
+        min_edge = 34
+    elif d_b <= 30:
+        min_edge = 38
+    else:
+        min_edge = 1.25 * d_b # Generic fallback
+        
+    return int(min_edge), round(min_spacing, 1), round(pref_spacing, 1)
 
 # ==========================================
 # 🏗️ MAIN UI RENDERER
@@ -76,7 +94,6 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             - **Span (L):** {span_m} m
             """)
 
-            # Logic แจ้งเตือน Deep Beam
             if ld_ratio < 4.0:
                 is_deep_beam = True
                 st.warning(f"⚠️ **Deep Beam Warning!** (L/D = {ld_ratio:.2f})")
@@ -91,10 +108,8 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
 
             st.markdown("---")
             
-            # [UPDATED] Load Input Selection
+            # Load Selection Logic
             st.markdown("##### 📥 Shear Load Input")
-            
-            # คำนวณ Capacity ของคานเตรียมไว้
             beam_shear_cap = calculate_beam_shear_capacity(beam, Fy, method)
             v_75_percent = 0.75 * beam_shear_cap
             
@@ -103,7 +118,6 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                                  horizontal=True)
             
             if "Auto" in load_mode:
-                # กรณีเลือก Auto
                 load_label = "Va (ASD)" if method == "ASD" else "Vu (LRFD)"
                 st.info(f"ℹ️ **Beam Capacity:** {beam_shear_cap:,.0f} kg")
                 Vu_load = v_75_percent
@@ -114,11 +128,9 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                # กรณีเลือก Manual (ของเดิม)
                 load_label = "Va (kg)" if method == "ASD" else "Vu (kg)"
                 Vu_load = st.number_input(load_label, value=5000.0, step=500.0)
             
-            # Material Grade
             mat_grade = st.selectbox("Plate Mat.", ["A36", "SS400", "A572-50"])
 
         with st.expander("2️⃣ Bolt & Connection Details", expanded=True):
@@ -127,11 +139,10 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             bolt_grade = c2.selectbox("Grade", ["A325", "A490", "Gr.8.8"])
             d_b = float(bolt_dia.replace("M",""))
             
-            # Geometry
+            # Geometry Input
             pitch = st.number_input("Pitch (s)", value=int(3*d_b), min_value=int(2.67*d_b))
             lev = st.number_input("V-Edge (Lev)", value=int(1.5*d_b))
             
-            # Row Logic
             max_rows = get_max_rows(bm_D, bm_Tf, k_des, 10, 10, pitch, lev)
             n_rows = st.number_input("Rows", min_value=2, max_value=max(2, max_rows), value=max(2, min(3, max_rows)))
             
@@ -140,7 +151,6 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             leh = st.number_input("H-Edge (Leh)", value=40)
 
         with st.expander("3️⃣ Plate & Weld", expanded=True):
-            # Width Logic
             min_w = setback + leh + int(1.25*d_b)
             w_mode = st.radio("Width", ["Auto", "Manual"], horizontal=True)
             if w_mode == "Auto":
@@ -175,12 +185,9 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
         # Status Box
         status_color = "#2ecc71" if summary['status'] == "PASS" else "#e74c3c"
         header_text = summary['status']
-        
-        # Adjust Header for Deep Beam Warning
         if is_deep_beam:
              header_text += " (⚠️ Deep Beam Warning)"
-             if summary['status'] == "PASS":
-                 status_color = "#f39c12" 
+             if summary['status'] == "PASS": status_color = "#f39c12" 
         
         st.markdown(f"""
         <div style="background-color: {status_color}; padding: 15px; border-radius: 8px; color: white; margin-bottom: 10px;">
@@ -190,10 +197,44 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2, tab3 = st.tabs(["🧊 3D Model", "📝 Detailed Calc. Sheet", "📊 Executive Summary"])
+        tab1, tab2, tab3 = st.tabs(["🧊 3D Model & Constr.", "📝 Detailed Calc.", "📊 Exec. Summary"])
         
-        # === TAB 1: 3D MODEL ===
+        # === TAB 1: 3D MODEL & CONSTRUCTION LABELS ===
         with tab1:
+            # AISC Min Checks
+            min_e, min_s, pref_s = get_aisc_min_values(d_b)
+            
+            # Check Status
+            chk_edge = "✅" if lev >= min_e else "❌ FAIL"
+            chk_space = "✅" if pitch >= min_s else "❌ FAIL"
+            
+            # [NEW] Construction Label Box
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 10px; margin-bottom: 10px;">
+                <h5 style="margin:0; color:#495057;">👷 Construction Check (AISC J3.3 & J3.4)</h5>
+                <table style="width:100%; text-align:center; font-size:0.9em;">
+                    <tr style="background-color:#e9ecef;">
+                        <th>Parameter</th>
+                        <th>Actual Design</th>
+                        <th>AISC Minimum</th>
+                        <th>Status</th>
+                    </tr>
+                    <tr>
+                        <td style="text-align:left;"><b>Edge Dist. (Lev)</b></td>
+                        <td><b>{lev}</b> mm</td>
+                        <td>{min_e} mm</td>
+                        <td>{chk_edge}</td>
+                    </tr>
+                    <tr>
+                        <td style="text-align:left;"><b>Spacing (Pitch)</b></td>
+                        <td><b>{pitch}</b> mm</td>
+                        <td>{min_s} mm (Pref. {pref_s})</td>
+                        <td>{chk_space}</td>
+                    </tr>
+                </table>
+            </div>
+            """, unsafe_allow_html=True)
+
             beam_dims = {'H': bm_D, 'B': beam['B']*d_factor, 'Tw': bm_Tw, 'Tf': bm_Tf}
             bolt_dims = {'dia': d_b, 'n_rows': n_rows, 'pitch': pitch, 'lev': lev, 'leh_beam': leh}
             plate_dims = {'t': plate_t, 'w': pl_w, 'h': pl_h, 'weld_sz': weld_sz}
@@ -210,15 +251,7 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             st.markdown(f"#### 📐 Engineering Calculation Report ({method})")
             
             if is_deep_beam:
-                st.warning(f"""
-                **Design Alert:**
-                Beam Span ({span_m} m) / Depth ({bm_D/1000:.2f} m) = **{ld_ratio:.2f}** (< 4.0).
-                Classified as **Deep Beam**. Flexural assumptions may not apply.
-                Ensure connection detailing accounts for non-linear shear distribution (Strut-and-Tie).
-                """)
-            
-            st.caption("Step-by-step verification with AISC References.")
-            st.markdown("---")
+                st.warning(f"**Deep Beam Alert:** L/D = {ld_ratio:.2f} (< 4.0). Verify with STM.")
             
             modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
             
@@ -264,28 +297,24 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                 st.markdown(f"""
                 - **Section:** `{section_name}`
                 - **Depth:** {bm_D:.0f} mm
-                - **Span:** {span_m} m
-                - **L/D Ratio:** {ld_ratio:.2f}
                 - **Mat:** {mat_grade}
                 """)
-                if is_deep_beam:
-                    st.error("⚠️ Deep Beam (Check STM)")
+                if is_deep_beam: st.error("⚠️ Deep Beam")
                 
             with sc2:
                 st.markdown("##### 🔩 Bolts")
                 st.markdown(f"""
                 - **Size:** M{d_b:.0f} ({bolt_grade})
-                - **Qty:** {n_rows} Rows (1 Col)
-                - **Total:** {n_rows} Bolts
-                - **Pitch:** {pitch} mm
+                - **Qty:** {n_rows} Rows
+                - **Edge (Lev):** {lev} mm
+                - **Pitch (s):** {pitch} mm
                 """)
                 
             with sc3:
                 st.markdown("##### ⬜ Plate & Weld")
                 st.markdown(f"""
-                - **Plate Size:** {pl_h:.0f} x {pl_w} mm
-                - **Thickness:** {plate_t} mm
-                - **Weld:** {weld_sz} mm (Fillet)
+                - **Plate:** {pl_h:.0f} x {pl_w} x {plate_t} mm
+                - **Weld:** {weld_sz} mm
                 - **Mat:** {mat_grade}
                 """)
 
@@ -300,40 +329,12 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             for m in modes_chk:
                 d = results.get(m)
                 if d:
-                    cap_val = f"{d['capacity']:,.0f}"
-                    ratio_val = d['ratio']
-                    status_emoji = "✅ PASS" if ratio_val <= 1.0 else "❌ FAIL"
-                    
+                    status_emoji = "✅ PASS" if d['ratio'] <= 1.0 else "❌ FAIL"
                     summary_data.append({
                         "Check Item": d['title'],
-                        "Capacity (kg)": cap_val,
-                        "Demand (kg)": f"{Vu_load:,.0f}",
-                        "Ratio": f"{ratio_val:.2f}",
+                        "Ratio": f"{d['ratio']:.2f}",
                         "Result": status_emoji
                     })
             
             df_sum = pd.DataFrame(summary_data)
             st.table(df_sum)
-            
-            # Overall Conclusion
-            final_res = summary['status']
-            if final_res == "PASS" and is_deep_beam:
-                final_color = "orange"
-                note_text = "PASS (See Warning)"
-                sub_note = "Check Deep Beam requirements (Strut-and-Tie)"
-            elif final_res == "PASS":
-                final_color = "green"
-                note_text = "PASS"
-                sub_note = ""
-            else:
-                final_color = "red"
-                note_text = "FAIL"
-                sub_note = ""
-
-            st.markdown(f"""
-            <div style="text-align: center; padding: 10px; border: 2px solid {final_color}; border-radius: 10px; background-color: rgba(0,0,0,0.02);">
-                <h2 style="color: {final_color}; margin:0;">OVERALL RESULT: {note_text}</h2>
-                <p>Governing Limit State: <b>{summary['gov_mode']}</b> (Ratio {summary['utilization']:.2f})</p>
-                <small style="color:{final_color};">{sub_note}</small>
-            </div>
-            """, unsafe_allow_html=True)
