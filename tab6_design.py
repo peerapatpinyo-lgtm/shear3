@@ -10,7 +10,7 @@ import calculator_tab as calc
 # 📐 HELPER FUNCTIONS
 # ==========================================
 def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
-    """คำนวณจำนวนแถวน็อตสูงสุดที่เป็นไปได้"""
+    """Calculate max feasible bolt rows"""
     workable_depth = beam_d - (2 * k_dist) 
     available_h = beam_d - (2 * beam_tf) - margin_top - margin_bot
     if available_h <= (2 * lev): return 0
@@ -18,11 +18,9 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
     return max(0, max_n)
 
 def get_material_Fu(Fy):
-    """ประมาณค่า Fu จาก Fy (สำหรับตรวจสอบ Bearing)"""
-    # SS400/A36 (Fy ~2400) -> Fu ~4000-4100
-    # SM520 (Fy ~3500-3600) -> Fu ~5000-5200
+    """Estimate Fu from Fy"""
     if Fy <= 2500: return 4000 # ksc (SS400)
-    elif Fy <= 3000: return 4500 # ksc (A572 Gr.50 approx)
+    elif Fy <= 3000: return 4500 # ksc (A572 Gr.50)
     else: return 5000 # ksc (SM520)
 
 def calculate_beam_shear_capacity(beam, Fy, method):
@@ -34,7 +32,7 @@ def calculate_beam_shear_capacity(beam, Fy, method):
     else: return 0.9 * Vn
 
 def get_aisc_min_values(d_b):
-    """คืนค่า Min Edge, Min Spacing"""
+    """Return Min Edge, Min Spacing"""
     min_spacing = 2.67 * d_b
     pref_spacing = 3.0 * d_b
     
@@ -53,7 +51,6 @@ def get_min_weld_size(part_t_mm):
     elif part_t_mm <= 19: return 6
     else: return 8
 
-# [Logic เดิม] Calculate Eccentric Weld Stress
 def calculate_eccentric_weld(load_kg, e_mm, L_mm, weld_sz_mm, method):
     e_cm = e_mm / 10.0
     L_cm = L_mm / 10.0
@@ -92,18 +89,16 @@ def calculate_eccentric_weld(load_kg, e_mm, L_mm, weld_sz_mm, method):
         ]
     }
 
-# [NEW] Calculate Beam Web Bearing
 def calculate_web_bearing(load_kg, d_b, n_bolts, tw_mm, Fy, method):
     Fu = get_material_Fu(Fy)
-    # Rn = 2.4 * d * t * Fu (Consider deformation at bolt hole)
-    # Note: Assuming standard edge distance on beam web is sufficient
+    # Rn = 2.4 * d * t * Fu
     rn_per_bolt = 2.4 * (d_b/10.0) * (tw_mm/10.0) * Fu 
     Rn_total = rn_per_bolt * n_bolts
     
     if method == "ASD":
-        cap = Rn_total / 2.00 # Omega = 2.00
+        cap = Rn_total / 2.00 
     else:
-        cap = 0.75 * Rn_total # Phi = 0.75
+        cap = 0.75 * Rn_total 
         
     ratio = load_kg / cap
     
@@ -162,7 +157,6 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                                  horizontal=True)
             
             if "Auto" in load_mode:
-                load_label = "Va" if method == "ASD" else "Vu"
                 st.info(f"ℹ️ Beam Cap: {beam_shear_cap:,.0f} kg")
                 Vu_load = v_75_percent
                 st.markdown(f"<div style='padding:8px; background:#e8f4f8; border-radius:4px;'><b>Design Load:</b> {Vu_load:,.0f} kg</div>", unsafe_allow_html=True)
@@ -203,7 +197,7 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             pl_h = (2 * lev) + ((n_rows - 1) * pitch)
 
     # --- CALCULATION ---
-    # 1. Standard Checks (Plate, Bolt, Weld Shear)
+    # 1. Standard Checks
     calc_inputs = {
         'method': method, 'load': Vu_load,
         'beam_tw': bm_Tw, 'beam_mat': mat_grade,
@@ -214,12 +208,12 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     }
     results = calc.calculate_shear_tab(calc_inputs)
     
-    # 2. [ADDED] Eccentric Weld Check
+    # 2. Eccentric Weld Check
     eccentricity = max(0, pl_w - leh)
     weld_ecc_res = calculate_eccentric_weld(Vu_load, eccentricity, pl_h, weld_sz, method)
     results['weld_eccentric'] = weld_ecc_res
 
-    # 3. [ADDED] Beam Web Bearing Check (CRITICAL)
+    # 3. Beam Web Bearing Check
     web_bearing_res = calculate_web_bearing(Vu_load, d_b, n_rows, bm_Tw, Fy, method)
     results['web_bearing'] = web_bearing_res
 
@@ -242,7 +236,6 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
 
     # --- DISPLAY OUTPUT ---
     with col_viz:
-        # Header Status
         status_color = "#2ecc71" if summary['status'] == "PASS" else "#e74c3c"
         header_text = summary['status']
         if is_deep_beam:
@@ -261,16 +254,9 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
         
         # === TAB 1: SITE & CONSTRUCTION CHECK ===
         with tab1:
-            # 1. AISC Min Geometry
             min_e, min_s, pref_s = get_aisc_min_values(d_b)
-            
-            # 2. Min Weld Size (AISC J2.4)
-            # Compare with Thicker Part (Usually Plate, but safest to check Plate T)
             req_min_weld = get_min_weld_size(plate_t)
             chk_weld = "✅" if weld_sz >= req_min_weld else f"❌ Min {req_min_weld}mm"
-            
-            # 3. Rotation Check (Ductility)
-            # Rule: t_plate <= db/2 + 2mm
             max_t_rot = (d_b / 2) + 2.0
             chk_rot = "✅" if plate_t <= max_t_rot else f"⚠️ Rigid ({plate_t} > {max_t_rot}mm)"
 
@@ -302,15 +288,12 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
         # === TAB 2: DETAILED CALC ===
         with tab2:
             st.markdown(f"#### 📐 Engineering Calculation ({method})")
-            
-            # เรียงลำดับ: เช็ค Bearing Web ก่อนเลย เพราะมักจะตายที่ตรงนี้
             modes = ['web_bearing', 'weld_eccentric', 'bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
             
             for mode in modes:
                 data = results.get(mode)
                 if data:
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
-                    # Highlight Web Bearing specifically
                     title_style = "color:#d9534f; font-weight:bold;" if mode == 'web_bearing' and data['ratio'] > 1.0 else ""
                     
                     with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=(data['ratio']>1.0)):
@@ -327,8 +310,6 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
         # === TAB 3: SUMMARY ===
         with tab3:
             st.markdown("### 📊 Engineering Summary")
-            
-            # Show Critical Check (Web Bearing)
             wb = results['web_bearing']
             wb_status = "PASS" if wb['ratio'] <= 1.0 else "FAIL"
             wb_color = "green" if wb_status == "PASS" else "red"
