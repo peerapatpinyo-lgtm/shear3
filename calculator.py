@@ -119,10 +119,9 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # ----------------------------------------------------
     # 5. Calculate Shear Capacity (Vn)
     # ----------------------------------------------------
-    # [FIX] ต้องส่ง Aw (Area Web) ออกไปให้ Tab 1 ใช้ด้วย
     Aw = (d_cm * tw_cm)
     Cv = 1.0 
-    Vn = 0.6 * Fy * Aw * Cv
+    Vn = 0.6 * Fy * Aw * Cv  # Nominal Shear Capacity
 
     if method == "ASD":
         V_des = Vn / 1.67
@@ -155,9 +154,8 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     L_md = 0 
 
     # ----------------------------------------------------
-    # 8. Return Results (FULL EXPORT)
+    # 8. Return Results
     # ----------------------------------------------------
-    # คืนค่าทุกตัวแปรที่คำนวณ เพื่อป้องกัน KeyError ในหน้า Report
     return {
         # --- Main Result ---
         'ws': w_s,
@@ -168,6 +166,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         'M_des': M_des,   
         'V_des': V_des,   
         'Mn': Mn,         
+        'Vn': Vn,         # [FIXED] Added this key!
         'Mp': Mp,
         
         # --- Section Props ---
@@ -175,14 +174,14 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         'Zx': Z_plastic,
         'Ix': Ix,
         'Iy': Iy,
-        'J': J,           # Added
-        'Cw': Cw,         # Added
-        'r_ts': r_ts,     # Added
-        'h0': h0,         # Added
+        'J': J,           
+        'Cw': Cw,         
+        'r_ts': r_ts,     
+        'h0': h0,         
         
         # --- Shear Params ---
-        'Aw': Aw,         # [FIX] Added (Area Web)
-        'Cv': Cv,         # Added
+        'Aw': Aw,         
+        'Cv': Cv,         
         
         # --- Input Parameters ---
         'L': L_m,          
@@ -190,7 +189,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         'Lb': Lb_cm / 100.0, 
         'Lb_cm': Lb_cm,   
         'E_ksc': E_ksc,
-        'Cb': Cb,         # Added
+        'Cb': Cb,         
         
         # --- LTB Limits ---
         'Lp': Lp / 100.0,
