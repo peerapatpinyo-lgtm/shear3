@@ -122,7 +122,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
 
         with tab2:
             st.markdown(f"#### 📐 Engineering Calculation Report ({method})")
-            st.caption("Step-by-step verification with variable substitution.")
+            st.caption("Step-by-step verification with AISC References.")
             st.markdown("---")
             
             modes = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
@@ -131,21 +131,22 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                 data = results.get(mode)
                 if data:
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
-                    # ใช้ Expander
                     with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
+                        
+                        # 0. Reference Badge (New)
+                        st.markdown(f"**Reference:** `{data.get('ref', 'AISC 360-16')}`")
                         
                         # 1. Formula
                         st.markdown("**1. Formula:**")
                         if 'latex_eq' in data:
                             st.latex(data['latex_eq'])
                         
-                        # 2. Substitution (New Feature)
+                        # 2. Substitution
                         st.markdown("**2. Substitution:**")
                         if 'latex_sub' in data:
-                            # แสดงผลการแทนค่า
                             st.latex(data['latex_sub'])
                         
-                        # 3. Parameters & Steps
+                        # 3. Parameters
                         st.markdown("**3. Parameters:**")
                         if 'calcs' in data:
                             for step in data['calcs']:
