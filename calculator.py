@@ -18,7 +18,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         Lb_cm = L_cm 
 
     E_ksc = E_gpa * 10000 
-    Cb = 1.0 
+    Cb = 1.0  # Cb factor
 
     # ----------------------------------------------------
     # 2. Extract Section Properties
@@ -119,6 +119,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # ----------------------------------------------------
     # 5. Calculate Shear Capacity (Vn)
     # ----------------------------------------------------
+    # [FIX] ต้องส่ง Aw (Area Web) ออกไปให้ Tab 1 ใช้ด้วย
     Aw = (d_cm * tw_cm)
     Cv = 1.0 
     Vn = 0.6 * Fy * Aw * Cv
@@ -154,33 +155,48 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     L_md = 0 
 
     # ----------------------------------------------------
-    # 8. Return Results (FIXED: Added 'Lb' and 'L' in meters)
+    # 8. Return Results (FULL EXPORT)
     # ----------------------------------------------------
+    # คืนค่าทุกตัวแปรที่คำนวณ เพื่อป้องกัน KeyError ในหน้า Report
     return {
-        # Capacities
+        # --- Main Result ---
         'ws': w_s,
         'wm': w_m,
         'wd': w_d,
+        
+        # --- Forces & Capacities ---
         'M_des': M_des,   
         'V_des': V_des,   
         'Mn': Mn,         
+        'Mp': Mp,
         
-        # Section Props
+        # --- Section Props ---
         'Sx': S_elastic, 
         'Zx': Z_plastic,
         'Ix': Ix,
         'Iy': Iy,
+        'J': J,           # Added
+        'Cw': Cw,         # Added
+        'r_ts': r_ts,     # Added
+        'h0': h0,         # Added
         
-        # Parameters (Added 'Lb' and 'L' for UI compatibility)
-        'L': L_m,           # [FIX] Added for UI
+        # --- Shear Params ---
+        'Aw': Aw,         # [FIX] Added (Area Web)
+        'Cv': Cv,         # Added
+        
+        # --- Input Parameters ---
+        'L': L_m,          
         'L_cm': L_cm,
-        'Lb': Lb_cm / 100.0, # [FIX] Added for UI (Metric Error)
+        'Lb': Lb_cm / 100.0, 
         'Lb_cm': Lb_cm,   
         'E_ksc': E_ksc,
+        'Cb': Cb,         # Added
         
-        # LTB info
+        # --- LTB Limits ---
         'Lp': Lp / 100.0,
         'Lr': Lr / 100.0,
+        
+        # --- Graph Transition ---
         'L_vm': L_vm,
         'L_md': L_md,
     }
