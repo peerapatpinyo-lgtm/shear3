@@ -11,8 +11,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     st.caption(f"Analysis Parameters: Fy={Fy} ksc, E={E_gpa} GPa, Limit=L/{def_limit} | Method: {method}")
 
     # --- 1. Data Processing ---
-    # เรียงลำดับตามความลึก (Depth) และน้ำหนัก (Weight)
-    # ใช้ .get('D', 0) เพื่อป้องกัน KeyError
+    # Sort by Depth (D) then Weight (W). Using .get() to prevent KeyErrors.
     all_sections = sorted(SYS_H_BEAMS.keys(), key=lambda x: (SYS_H_BEAMS[x].get('D', 0), SYS_H_BEAMS[x].get('W', 0)))
     
     data_list = []
@@ -23,17 +22,18 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     for i, section_name in enumerate(all_sections):
         props = SYS_H_BEAMS[section_name]
         
-        # 1.1 คำนวณค่าวิกฤต
-        # ส่งความยาว Dummy 10m ไปก่อน (ค่า L_vm, L_md ไม่ขึ้นกับความยาว input)
+        # 1.1 Calculate Critical Lengths
+        # We pass a dummy length (10.0m) because transition points (L_vm, L_md) 
+        # depend on section properties, not the span itself.
         try:
             c = core_calculation(10.0, Fy, E_gpa, props, method, def_limit)
             
-            L_vm = c['L_vm']
-            L_md = c['L_md']
+            L_vm = c['L_vm']  # Shear -> Moment transition
+            L_md = c['L_md']  # Moment -> Deflection transition
             
-            # 1.2 คำนวณ Load Scenarios
+            # 1.2 Calculate Load Scenarios (for the Blue Diamond)
             if L_vm > 0:
-                # คำนวณ Load กลับจาก Shear Capacity
+                # Find max load at Shear limit
                 w_max_shear_limit = (2 * c['V_des'] / (L_vm * 100)) * 100 
             else:
                 w_max_shear_limit = 0
@@ -41,11 +41,12 @@ def render_tab5(method, Fy, E_gpa, def_limit):
             w_75 = 0.75 * w_max_shear_limit
             
             if w_75 > 0:
-                # L = sqrt(8 * M / w)
+                # Find span that can hold 75% load
                 L_75 = np.sqrt((8 * c['M_des']) / (w_75 / 100)) / 100 
             else:
                 L_75 = 0
 
+            # Determine visual range for graph
             max_dist = max(L_md, L_75)
             visual_end_point = max(max_dist * 1.15, L_md + 1.0) 
             L_deflect_width = max(0, visual_end_point - L_md)
@@ -61,12 +62,12 @@ def render_tab5(method, Fy, E_gpa, def_limit):
                 "Ref_Start_Deflect": L_md,
                 "L_75": L_75,
                 "Load_75": w_75,
-                # เก็บค่า Lp และ Lr มาแสดงผลแทน Zone
+                # Store Lp and Lr for the tooltip instead of generic Zone
                 "Lp": c.get('Lp', 0),
                 "Lr": c.get('Lr', 0)
             })
         except Exception as e:
-            # ถ้าคานตัวไหนคำนวณไม่ได้ ให้ข้ามไปก่อน (จะได้ไม่พังทั้งแอป)
+            # Skip invalid sections to prevent app crash
             print(f"Error calculating {section_name}: {e}")
             continue
 
@@ -92,7 +93,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     ))
 
     # Layer 2: Moment Control (Orange)
-    # แสดง Tooltip เป็นค่า Lp และ Lr เพื่อประโยชน์ทางวิศวกรรม
+    # Using customdata to pass [DeflectionStart, Lp, Lr] to the tooltip
     fig.add_trace(go.Bar(
         y=df['Section'], x=df['L_moment_width'],
         name='Moment Control', orientation='h',
@@ -123,7 +124,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     fig.update_layout(
         title="Structural Behavior Timeline (All Beams)",
         barmode='stack', 
-        height=max(600, len(df) * 25), # ปรับความสูงตามจำนวนคาน
+        height=max(600, len(df) * 25), # Auto-height
         xaxis_title="Span Length (m)", 
         yaxis_title="Section",
         legend=dict(orientation="h", y=1.02, x=1, xanchor="right"),
@@ -131,7 +132,28 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 3. Table ---
+    # --- 3. Explanation (English) ---
+    st.markdown("---")
+    st.markdown("### 📖 How to Read This Timeline")
+    st.markdown(f"""
+    This chart visualizes the **governing failure mode** of each beam section as the span length increases (from left to right).
+    
+    * 🔴 **Shear Control (Red Zone):**
+        At very short spans, the beam's capacity is limited by **Shear Force**. The beam is strong enough in bending, but may fail in shear.
+    
+    * 🟠 **Moment Control (Orange Zone):**
+        This is the **Structural Efficiency Zone**. In this range, the beam's design is governed by its **Bending Moment** capacity.
+        * *Tip:* Hover over this bar to see **LTB Limits ($L_p$)**. If your actual unbraced length > $L_p$, the moment capacity will decrease due to Lateral-Torsional Buckling.
+    
+    * 🟢 **Deflection Control (Green Zone):**
+        Beyond the orange zone, the beam is still strong enough to carry the load, but it fails the **Serviceability Limit** (it sags too much).
+        * *Criterion:* Deflection > Span / {def_limit}
+    
+    * 🔷 **Span @ 75% Capacity (Blue Diamond):**
+        A reference point indicating the maximum span if the beam is utilized at **75% of its maximum load capacity**. This helps in selecting a conservative design quickly.
+    """)
+
+    # --- 4. Table ---
     with st.expander("📄 View Detailed Data Table"):
         st.dataframe(
             df[['Section', 'Weight', 'Ref_Start_Deflect', 'L_75', 'Load_75', 'Lp']],
@@ -139,7 +161,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
                 "Ref_Start_Deflect": st.column_config.NumberColumn("Deflection Starts (m)", format="%.2f"),
                 "L_75": st.column_config.NumberColumn("Span @ 75% Load (m)", format="%.2f"),
                 "Load_75": st.column_config.NumberColumn("Load @ 75% (kg/m)", format="%d"),
-                "Lp": st.column_config.NumberColumn("Max Unbraced (Lp)", format="%.2f m", help="ระยะค้ำยันสูงสุดที่ยังรับโมเมนต์ได้เต็มพิกัด (Full Plastic Moment)")
+                "Lp": st.column_config.NumberColumn("Max Unbraced (Lp)", format="%.2f m", help="Max unbraced length to maintain full plastic moment capacity.")
             },
             hide_index=True, use_container_width=True
         )
