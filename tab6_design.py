@@ -106,8 +106,10 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2 = st.tabs(["🧊 3D Model", "📝 Detailed Calc. Sheet"])
+        # เพิ่ม Tab ที่ 3 เข้ามา
+        tab1, tab2, tab3 = st.tabs(["🧊 3D Model", "📝 Detailed Calc. Sheet", "📊 Executive Summary"])
         
+        # === TAB 1: 3D MODEL ===
         with tab1:
             beam_dims = {'H': bm_D, 'B': beam['B']*d_factor, 'Tw': bm_Tw, 'Tf': bm_Tf}
             bolt_dims = {'dia': d_b, 'n_rows': n_rows, 'pitch': pitch, 'lev': lev, 'leh_beam': leh}
@@ -120,6 +122,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             except Exception as e:
                 st.error(f"❌ Error Plotting: {e}")
 
+        # === TAB 2: DETAILED CALCULATION ===
         with tab2:
             st.markdown(f"#### 📐 Engineering Calculation Report ({method})")
             st.caption("Step-by-step verification with AISC References.")
@@ -133,7 +136,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
                     with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
                         
-                        # 0. Reference Badge (New)
+                        # 0. Reference Badge
                         st.markdown(f"**Reference:** `{data.get('ref', 'AISC 360-16')}`")
                         
                         # 1. Formula
@@ -162,3 +165,82 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                             <b>Answer:</b> {cap_symbol} = <b>{data['capacity']:,.0f} kg</b> {sign} Load ({Vu_load:,.0f} kg)
                         </div>
                         """, unsafe_allow_html=True)
+
+        # === TAB 3: EXECUTIVE SUMMARY (NEW!) ===
+        with tab3:
+            st.markdown("### 📊 Design Specification & Verification Summary")
+            st.markdown("---")
+            
+            # PART 1: MATERIAL & SPECIFICATIONS
+            st.info("📌 1. Design Configuration (รายการประกอบแบบ)")
+            
+            # ใช้ Columns จัด layout ให้เหมือนตาราง BOM
+            sc1, sc2, sc3 = st.columns(3)
+            
+            with sc1:
+                st.markdown("##### 🏗️ Host Beam")
+                st.markdown(f"""
+                - **Section:** `{sec_name}`
+                - **Depth:** {bm_D:.0f} mm
+                - **Web:** {bm_Tw} mm
+                - **Mat:** {mat_grade}
+                """)
+                
+            with sc2:
+                st.markdown("##### 🔩 Bolts")
+                st.markdown(f"""
+                - **Size:** M{d_b:.0f} ({bolt_grade})
+                - **Qty:** {n_rows} Rows (1 Col)
+                - **Total:** {n_rows} Bolts
+                - **Pitch:** {pitch} mm
+                """)
+                
+            with sc3:
+                st.markdown("##### ⬜ Plate & Weld")
+                st.markdown(f"""
+                - **Plate Size:** {pl_h:.0f} x {pl_w} mm
+                - **Thickness:** {plate_t} mm
+                - **Weld:** {weld_sz} mm (Fillet)
+                - **Mat:** {mat_grade}
+                """)
+
+            st.markdown("---")
+            
+            # PART 2: ENGINEERING CHECKLIST
+            st.success("📌 2. Engineering Verification Checklist")
+            
+            # สร้าง List ของข้อมูลเพื่อนำไปทำตาราง
+            summary_data = []
+            modes_chk = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
+            
+            for m in modes_chk:
+                d = results.get(m)
+                if d:
+                    # Formatting values
+                    cap_val = f"{d['capacity']:,.0f}"
+                    ratio_val = d['ratio']
+                    status_emoji = "✅ PASS" if ratio_val <= 1.0 else "❌ FAIL"
+                    
+                    summary_data.append({
+                        "Check Item": d['title'],
+                        "Capacity (kg)": cap_val,
+                        "Demand (kg)": f"{Vu_load:,.0f}",
+                        "Ratio": f"{ratio_val:.2f}",
+                        "Result": status_emoji
+                    })
+            
+            # แสดงผลเป็น Table
+            df_sum = pd.DataFrame(summary_data)
+            
+            # ใช้ st.table จะแสดงผล emoji ได้สวยกว่า st.dataframe ในบาง browser และดูเป็นทางการกว่า
+            st.table(df_sum)
+            
+            # Overall Conclusion
+            final_res = summary['status']
+            final_color = "green" if final_res == "PASS" else "red"
+            st.markdown(f"""
+            <div style="text-align: center; padding: 10px; border: 2px solid {final_color}; border-radius: 10px; background-color: rgba(0,0,0,0.02);">
+                <h2 style="color: {final_color}; margin:0;">OVERALL RESULT: {final_res}</h2>
+                <p>Governing Limit State: <b>{summary['gov_mode']}</b> (Ratio {summary['utilization']:.2f})</p>
+            </div>
+            """, unsafe_allow_html=True)
