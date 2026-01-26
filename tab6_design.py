@@ -20,32 +20,66 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
 # ==========================================
 # 🏗️ MAIN UI RENDERER
 # ==========================================
-def render_tab6(method, Fy, E_gpa, def_limit):
+# [UPDATE] รับค่า section_name และ span_m จาก Sidebar (app.py) โดยตรง
+def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     st.markdown(f"### 🏗️ Shear Plate Design ({method} Method)")
+    
+    # 1. ดึงข้อมูลจาก Database โดยใช้ชื่อที่ส่งมาจาก Sidebar
+    # (ไม่ต้องสร้าง st.selectbox ให้เลือกซ้ำอีกแล้ว)
+    if section_name not in SYS_H_BEAMS:
+        # กรณีกันเหนียว (Fallback)
+        section_name = list(SYS_H_BEAMS.keys())[0]
+        
+    beam = SYS_H_BEAMS[section_name]
+    
+    # Extract Beam Props
+    d_factor = 10 if beam['D'] < 100 else 1
+    bm_D = beam['D'] * d_factor
+    bm_Tw = beam.get('t1', 6.0)
+    bm_Tf = beam.get('t2', 9.0)
+    k_des = 30 
+
+    # 2. คำนวณ Deep Beam Check (จากค่าที่ส่งมา)
+    ld_ratio = (span_m * 1000) / bm_D
+    is_deep_beam = False
+    
     col_input, col_viz = st.columns([1.3, 2.5])
 
-    # --- 1. INPUT SECTION ---
+    # --- INPUT SECTION ---
     with col_input:
-        with st.expander("1️⃣ Host Beam & Load", expanded=True):
-            sec_name = st.selectbox("Section", list(SYS_H_BEAMS.keys()))
-            beam = SYS_H_BEAMS[sec_name]
+        with st.expander("1️⃣ Beam Info & Verification", expanded=True):
+            # [CHANGE] แสดงชื่อ Section ที่เลือกมาจาก Sidebar แทนการให้เลือกใหม่
+            st.info(f"📌 **Current Beam:** `{section_name}`")
             
-            # Extract Beam Props
-            d_factor = 10 if beam['D'] < 100 else 1
-            bm_D = beam['D'] * d_factor
-            bm_Tw = beam.get('t1', 6.0)
-            bm_Tf = beam.get('t2', 9.0)
-            k_des = 30 
+            # แสดง Properties ให้ดู (แต่แก้ไขไม่ได้ เพราะต้องแก้ที่ Sidebar)
+            st.markdown(f"""
+            - **Depth (D):** {bm_D:.0f} mm
+            - **Web (Tw):** {bm_Tw} mm
+            - **Span (L):** {span_m} m
+            """)
+
+            # Logic แจ้งเตือน Deep Beam
+            if ld_ratio < 4.0:
+                is_deep_beam = True
+                st.warning(f"⚠️ **Deep Beam Warning!** (L/D = {ld_ratio:.2f})")
+                st.markdown("""
+                <small style="color: #856404;">
+                Span-to-depth ratio < 4. Standard beam theory allows only approximate results.
+                <b>Recommendation:</b> Verify with Strut-and-Tie Model.
+                </small>
+                """, unsafe_allow_html=True)
+            else:
+                st.success(f"✅ Geometry OK (L/D = {ld_ratio:.2f})")
+
+            st.markdown("---")
             
-            st.caption(f"D:{bm_D:.0f} | Tw:{bm_Tw} | Tf:{bm_Tf}")
-            
-            # Load & Materials
+            # Load & Materials (ส่วนนี้ยังให้กรอกได้ เพราะ Load อาจจะไม่เท่ากับ Analysis เสมอไป)
             c_load, c_mat = st.columns(2)
             load_label = "Va (kg)" if method == "ASD" else "Vu (kg)"
             Vu_load = c_load.number_input(load_label, value=5000.0, step=500.0)
             mat_grade = c_mat.selectbox("Mat.", ["A36", "SS400", "A572-50"])
 
-        with st.expander("2️⃣ Bolt & Geometry", expanded=True):
+        with st.expander("2️⃣ Bolt & Connection Details", expanded=True):
             c1, c2 = st.columns(2)
             bolt_dia = c1.selectbox("Dia.", ["M16", "M20", "M22", "M24"], index=1)
             bolt_grade = c2.selectbox("Grade", ["A325", "A490", "Gr.8.8"])
@@ -79,7 +113,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             
             pl_h = (2 * lev) + ((n_rows - 1) * pitch)
 
-    # --- 2. CALCULATION LINK ---
+    # --- CALCULATION LINK ---
     calc_inputs = {
         'method': method,
         'load': Vu_load,
@@ -94,19 +128,26 @@ def render_tab6(method, Fy, E_gpa, def_limit):
     results = calc.calculate_shear_tab(calc_inputs)
     summary = results['summary']
 
-    # --- 3. DISPLAY OUTPUT ---
+    # --- DISPLAY OUTPUT ---
     with col_viz:
         # Status Box
         status_color = "#2ecc71" if summary['status'] == "PASS" else "#e74c3c"
+        header_text = summary['status']
+        
+        # Adjust Header for Deep Beam Warning
+        if is_deep_beam:
+             header_text += " (⚠️ Deep Beam Warning)"
+             if summary['status'] == "PASS":
+                 status_color = "#f39c12" 
+        
         st.markdown(f"""
         <div style="background-color: {status_color}; padding: 15px; border-radius: 8px; color: white; margin-bottom: 10px;">
-            <h3 style="margin:0;">{summary['status']} (Ratio: {summary['utilization']:.2f})</h3>
+            <h3 style="margin:0;">{header_text} (Ratio: {summary['utilization']:.2f})</h3>
             <p style="margin:0;">Load: {Vu_load:,.0f} kg | Capacity: {summary['gov_capacity']:,.0f} kg</p>
             <small>Governing Mode: {summary['gov_mode']} ({method})</small>
         </div>
         """, unsafe_allow_html=True)
         
-        # เพิ่ม Tab ที่ 3 เข้ามา
         tab1, tab2, tab3 = st.tabs(["🧊 3D Model", "📝 Detailed Calc. Sheet", "📊 Executive Summary"])
         
         # === TAB 1: 3D MODEL ===
@@ -125,6 +166,15 @@ def render_tab6(method, Fy, E_gpa, def_limit):
         # === TAB 2: DETAILED CALCULATION ===
         with tab2:
             st.markdown(f"#### 📐 Engineering Calculation Report ({method})")
+            
+            if is_deep_beam:
+                st.warning(f"""
+                **Design Alert:**
+                Beam Span ({span_m} m) / Depth ({bm_D/1000:.2f} m) = **{ld_ratio:.2f}** (< 4.0).
+                Classified as **Deep Beam**. Flexural assumptions may not apply.
+                Ensure connection detailing accounts for non-linear shear distribution (Strut-and-Tie).
+                """)
+            
             st.caption("Step-by-step verification with AISC References.")
             st.markdown("---")
             
@@ -135,27 +185,18 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                 if data:
                     icon = "✅" if data['ratio'] <= 1.0 else "❌"
                     with st.expander(f"{icon} {data['title']} (Ratio: {data['ratio']:.2f})", expanded=False):
-                        
-                        # 0. Reference Badge
                         st.markdown(f"**Reference:** `{data.get('ref', 'AISC 360-16')}`")
                         
-                        # 1. Formula
                         st.markdown("**1. Formula:**")
-                        if 'latex_eq' in data:
-                            st.latex(data['latex_eq'])
+                        if 'latex_eq' in data: st.latex(data['latex_eq'])
                         
-                        # 2. Substitution
                         st.markdown("**2. Substitution:**")
-                        if 'latex_sub' in data:
-                            st.latex(data['latex_sub'])
+                        if 'latex_sub' in data: st.latex(data['latex_sub'])
                         
-                        # 3. Parameters
                         st.markdown("**3. Parameters:**")
                         if 'calcs' in data:
-                            for step in data['calcs']:
-                                st.markdown(f"- {step}")
+                            for step in data['calcs']: st.markdown(f"- {step}")
                         
-                        # 4. Final Answer
                         res_color = "green" if data['ratio'] <= 1.0 else "red"
                         sign = '≥' if data['ratio'] <= 1.0 else '<'
                         cap_symbol = "Rn/Ω" if method == "ASD" else "φRn"
@@ -166,7 +207,7 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                         </div>
                         """, unsafe_allow_html=True)
 
-        # === TAB 3: EXECUTIVE SUMMARY (NEW!) ===
+        # === TAB 3: EXECUTIVE SUMMARY ===
         with tab3:
             st.markdown("### 📊 Design Specification & Verification Summary")
             st.markdown("---")
@@ -174,17 +215,19 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             # PART 1: MATERIAL & SPECIFICATIONS
             st.info("📌 1. Design Configuration (รายการประกอบแบบ)")
             
-            # ใช้ Columns จัด layout ให้เหมือนตาราง BOM
             sc1, sc2, sc3 = st.columns(3)
             
             with sc1:
                 st.markdown("##### 🏗️ Host Beam")
                 st.markdown(f"""
-                - **Section:** `{sec_name}`
+                - **Section:** `{section_name}`
                 - **Depth:** {bm_D:.0f} mm
-                - **Web:** {bm_Tw} mm
+                - **Span:** {span_m} m
+                - **L/D Ratio:** {ld_ratio:.2f}
                 - **Mat:** {mat_grade}
                 """)
+                if is_deep_beam:
+                    st.error("⚠️ Deep Beam (Check STM)")
                 
             with sc2:
                 st.markdown("##### 🔩 Bolts")
@@ -209,14 +252,12 @@ def render_tab6(method, Fy, E_gpa, def_limit):
             # PART 2: ENGINEERING CHECKLIST
             st.success("📌 2. Engineering Verification Checklist")
             
-            # สร้าง List ของข้อมูลเพื่อนำไปทำตาราง
             summary_data = []
             modes_chk = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'block_shear', 'weld']
             
             for m in modes_chk:
                 d = results.get(m)
                 if d:
-                    # Formatting values
                     cap_val = f"{d['capacity']:,.0f}"
                     ratio_val = d['ratio']
                     status_emoji = "✅ PASS" if ratio_val <= 1.0 else "❌ FAIL"
@@ -229,18 +270,28 @@ def render_tab6(method, Fy, E_gpa, def_limit):
                         "Result": status_emoji
                     })
             
-            # แสดงผลเป็น Table
             df_sum = pd.DataFrame(summary_data)
-            
-            # ใช้ st.table จะแสดงผล emoji ได้สวยกว่า st.dataframe ในบาง browser และดูเป็นทางการกว่า
             st.table(df_sum)
             
             # Overall Conclusion
             final_res = summary['status']
-            final_color = "green" if final_res == "PASS" else "red"
+            if final_res == "PASS" and is_deep_beam:
+                final_color = "orange"
+                note_text = "PASS (See Warning)"
+                sub_note = "Check Deep Beam requirements (Strut-and-Tie)"
+            elif final_res == "PASS":
+                final_color = "green"
+                note_text = "PASS"
+                sub_note = ""
+            else:
+                final_color = "red"
+                note_text = "FAIL"
+                sub_note = ""
+
             st.markdown(f"""
             <div style="text-align: center; padding: 10px; border: 2px solid {final_color}; border-radius: 10px; background-color: rgba(0,0,0,0.02);">
-                <h2 style="color: {final_color}; margin:0;">OVERALL RESULT: {final_res}</h2>
+                <h2 style="color: {final_color}; margin:0;">OVERALL RESULT: {note_text}</h2>
                 <p>Governing Limit State: <b>{summary['gov_mode']}</b> (Ratio {summary['utilization']:.2f})</p>
+                <small style="color:{final_color};">{sub_note}</small>
             </div>
             """, unsafe_allow_html=True)
