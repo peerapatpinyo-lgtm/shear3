@@ -1,5 +1,5 @@
+# tab6_design.py
 import streamlit as st
-import pandas as pd
 import calculator_tab  # ต้องมีไฟล์ calculator_tab.py ในโฟลเดอร์เดียวกัน
 import drawer_3d       # ต้องมีไฟล์ drawer_3d.py ในโฟลเดอร์เดียวกัน
 
@@ -12,18 +12,18 @@ def render_tab():
     # ==========================================
     col1, col2, col3 = st.columns([1, 1, 1.2])
 
-    # List วัสดุที่ตรงกับ calculator_tab.py
     material_list = ["SS400", "A36", "SM520", "A572-50", "A992"]
 
     with col1:
         st.markdown("### 🏗️ Beam Data")
-        # รับค่าหน้าตัดคาน
+        # [UPDATED] เพิ่ม Beam Span เพื่อเช็ค Deep Beam
+        beam_span = st.number_input("Beam Span Length (mm)", value=6000.0, step=500.0, help="ใช้ตรวจสอบ Deep Beam Condition (L/D < 4)")
+        
         beam_d = st.number_input("Beam Depth (mm)", value=400.0, step=10.0)
         beam_b = st.number_input("Beam Width (mm)", value=200.0, step=5.0)
         beam_tw = st.number_input("Web Thickness (mm)", value=8.0, step=0.5)
         beam_tf = st.number_input("Flange Thickness (mm)", value=13.0, step=0.5)
         
-        # เลือกวัสดุคาน (ส่ง Key string ไปให้ calculator_tab)
         mat_bm = st.selectbox("Beam Material", material_list, index=0)
 
         st.markdown("---")
@@ -38,7 +38,13 @@ def render_tab():
         tp = st.selectbox("Plate Thickness (mm)", [6, 9, 10, 12, 16, 19, 25], index=2)
         h_pl = st.number_input("Plate Height (mm)", value=250.0)
         mat_pl = st.selectbox("Plate Material", material_list, index=0)
-        weld_sz = st.number_input("Weld Size (mm)", value=6.0, step=1.0)
+        
+        # [UPDATED] เพิ่ม Electrode Selection
+        col_w1, col_w2 = st.columns(2)
+        with col_w1:
+            weld_sz = st.number_input("Weld Size (mm)", value=6.0, step=1.0)
+        with col_w2:
+            electrode = st.selectbox("Electrode", ["E70", "E60"], index=0, help="E70=4921ksc, E60=4218ksc")
         
         # Bolts
         st.caption("Bolt Properties")
@@ -55,20 +61,22 @@ def render_tab():
     # ==========================================
     # 2. CALCULATION & PROCESSING
     # ==========================================
-    # Pack inputs
     inputs = {
         'method': method,
         'load': Vu_input,
         
-        # Beam
+        # Beam Data (Updated)
+        'beam_d': beam_d,
         'beam_tw': beam_tw,
+        'beam_span': beam_span, # For Deep Beam Check
         'beam_mat': mat_bm,
         
-        # Plate
+        # Plate & Weld (Updated)
         'plate_t': tp,
         'plate_h': h_pl,
         'plate_mat': mat_pl,
         'weld_sz': weld_sz,
+        'electrode': electrode, # Check E60/E70
         
         # Bolt & Geom
         'bolt_dia': d_b,
@@ -79,7 +87,6 @@ def render_tab():
         'leh': leh
     }
 
-    # Call Engine
     results = calculator_tab.calculate_shear_tab(inputs)
 
     # ==========================================
@@ -103,6 +110,11 @@ def render_tab():
             </div>
             """, unsafe_allow_html=True
         )
+
+        # [UPDATED] Display Warnings if any (Deep Beam)
+        if results.get('warnings'):
+            for warn in results['warnings']:
+                st.warning(warn, icon="⚠️")
 
         # Detailed Breakdown
         check_list = ['bolt_shear', 'bearing', 'shear_yield', 'shear_rupture', 'weld']
@@ -129,7 +141,6 @@ def render_tab():
     st.markdown("### 🧊 3D Connection Preview")
     
     viz_beam = {'H': beam_d, 'B': beam_b, 'Tw': beam_tw, 'Tf': beam_tf}
-    # Plate width estimate: Leh + Gap + extra
     plate_width_est = leh + 50.0 
     viz_plate = {'t': tp, 'w': plate_width_est, 'h': h_pl, 'weld_sz': weld_sz}
     viz_bolt = {
