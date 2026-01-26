@@ -2,22 +2,27 @@ import streamlit as st
 import calculator_tab
 import drawer_3d
 
-def render_tab6():
+# [FIX] เพิ่ม *args เพื่อรับค่า method, Fy, section ฯลฯ ที่ app.py ส่งมา (รับไว้แต่ไม่ใช้ เพื่อกัน Error)
+def render_tab6(*args):
     st.markdown("## Shear Tab Connection Design (AISC 360-16)")
     st.info("Design Check: Shear Yield, Shear Rupture, Block Shear, Bolt Shear, Bearing & Tearout")
 
-    # INPUT SECTION
+    # ==========================================
+    # 1. INPUT SECTION
+    # ==========================================
     col1, col2, col3 = st.columns([1, 1, 1.2])
 
     material_list = ["SS400", "A36", "SM520", "A572-50", "A992"]
 
     with col1:
         st.markdown("### Beam Data")
+        # Default Inputs
         beam_span = st.number_input("Beam Span Length (mm)", value=6000.0, step=500.0)
         beam_d = st.number_input("Beam Depth (mm)", value=400.0, step=10.0)
         beam_b = st.number_input("Beam Width (mm)", value=200.0, step=5.0)
         beam_tw = st.number_input("Web Thickness (mm)", value=8.0, step=0.5)
         beam_tf = st.number_input("Flange Thickness (mm)", value=13.0, step=0.5)
+        
         mat_bm = st.selectbox("Beam Material", material_list, index=0)
 
         st.markdown("---")
@@ -33,7 +38,7 @@ def render_tab6():
         h_pl = st.number_input("Plate Height (mm)", value=250.0)
         mat_pl = st.selectbox("Plate Material", material_list, index=0)
         
-        # Weld
+        # Weld & Electrode
         col_w1, col_w2 = st.columns(2)
         with col_w1:
             weld_sz = st.number_input("Weld Size (mm)", value=6.0, step=1.0)
@@ -52,7 +57,9 @@ def render_tab6():
         lev = st.number_input("Vertical Edge (Lev) [mm]", value=40.0)
         leh = st.number_input("Horizontal Edge (Leh) [mm]", value=35.0)
 
-    # CALCULATION
+    # ==========================================
+    # 2. CALCULATION
+    # ==========================================
     inputs = {
         'method': method,
         'load': Vu_input,
@@ -75,7 +82,9 @@ def render_tab6():
 
     results = calculator_tab.calculate_shear_tab(inputs)
 
-    # DISPLAY RESULTS
+    # ==========================================
+    # 3. DISPLAY RESULTS
+    # ==========================================
     with col3:
         st.markdown("### Check Results")
         
@@ -110,7 +119,9 @@ def render_tab6():
                 st.markdown(f"**Capacity:**")
                 st.latex(f"{res['latex_sub']} = {res['capacity']:,.0f} kg")
 
-    # 3D VISUALIZATION
+    # ==========================================
+    # 4. 3D VISUALIZATION
+    # ==========================================
     st.markdown("---")
     st.markdown("### 3D Connection Preview")
     
