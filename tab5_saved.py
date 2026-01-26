@@ -11,7 +11,8 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     st.caption(f"Analysis Parameters: Fy={Fy} ksc, E={E_gpa} GPa, Limit=L/{def_limit} | Method: {method}")
 
     # --- 1. Data Processing ---
-    # แก้ไขจุดที่ Error: เปลี่ยนจาก 'Depth' เป็น 'D' และใส่ .get() กันพลาด
+    # เรียงลำดับตามความลึก (Depth) และน้ำหนัก (Weight)
+    # ใช้ .get('D', 0) เพื่อป้องกัน KeyError
     all_sections = sorted(SYS_H_BEAMS.keys(), key=lambda x: (SYS_H_BEAMS[x].get('D', 0), SYS_H_BEAMS[x].get('W', 0)))
     
     data_list = []
@@ -23,7 +24,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         props = SYS_H_BEAMS[section_name]
         
         # 1.1 คำนวณค่าวิกฤต
-        # ส่งค่า D, B, tw, tf ให้ calculator ผ่านตัวแปร props
+        # ส่งความยาว Dummy 10m ไปก่อน (ค่า L_vm, L_md ไม่ขึ้นกับความยาว input)
         try:
             c = core_calculation(10.0, Fy, E_gpa, props, method, def_limit)
             
@@ -33,7 +34,6 @@ def render_tab5(method, Fy, E_gpa, def_limit):
             # 1.2 คำนวณ Load Scenarios
             if L_vm > 0:
                 # คำนวณ Load กลับจาก Shear Capacity
-                # V_des = w * L / 2  ->  w = 2 * V / L
                 w_max_shear_limit = (2 * c['V_des'] / (L_vm * 100)) * 100 
             else:
                 w_max_shear_limit = 0
@@ -52,7 +52,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
 
             data_list.append({
                 "Section": section_name,
-                "Weight": props.get('W', 0), # ใช้ .get กันพลาด
+                "Weight": props.get('W', 0),
                 "Ix": props.get('Ix', 0),
                 "L_shear": L_vm,
                 "L_moment_width": max(0, L_md - L_vm),
@@ -61,7 +61,9 @@ def render_tab5(method, Fy, E_gpa, def_limit):
                 "Ref_Start_Deflect": L_md,
                 "L_75": L_75,
                 "Load_75": w_75,
-                "LTB_Zone": c.get('Zone', 'N/A')
+                # เก็บค่า Lp และ Lr มาแสดงผลแทน Zone
+                "Lp": c.get('Lp', 0),
+                "Lr": c.get('Lr', 0)
             })
         except Exception as e:
             # ถ้าคานตัวไหนคำนวณไม่ได้ ให้ข้ามไปก่อน (จะได้ไม่พังทั้งแอป)
@@ -81,7 +83,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     # --- 2. Visualization (Graph) ---
     fig = go.Figure()
 
-    # Layer 1: Shear
+    # Layer 1: Shear Control (Red)
     fig.add_trace(go.Bar(
         y=df['Section'], x=df['L_shear'],
         name='Shear Control', orientation='h',
@@ -89,17 +91,18 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         hovertemplate="<b>%{y}</b><br>🔴 Shear Zone: 0 - %{x:.2f} m<extra></extra>"
     ))
 
-    # Layer 2: Moment
+    # Layer 2: Moment Control (Orange)
+    # แสดง Tooltip เป็นค่า Lp และ Lr เพื่อประโยชน์ทางวิศวกรรม
     fig.add_trace(go.Bar(
         y=df['Section'], x=df['L_moment_width'],
         name='Moment Control', orientation='h',
         marker=dict(color='#f0ad4e', line=dict(width=0)),
         base=df['L_shear'],
-        customdata=np.stack((df['Ref_Start_Deflect'], df['LTB_Zone']), axis=-1),
-        hovertemplate="🟠 <b>Moment Zone</b><br>Range: %{base:.2f} - %{customdata[0]:.2f} m<br>Behavior: <b>%{customdata[1]}</b><extra></extra>"
+        customdata=np.stack((df['Ref_Start_Deflect'], df['Lp'], df['Lr']), axis=-1),
+        hovertemplate="🟠 <b>Moment Zone</b><br>Range: %{base:.2f} - %{customdata[0]:.2f} m<br>⚠️ <b>LTB Limits (Unbraced):</b><br> - Max Plastic (Lp): %{customdata[1]:.2f} m<br> - Max Inelastic (Lr): %{customdata[2]:.2f} m<extra></extra>"
     ))
 
-    # Layer 3: Deflection
+    # Layer 3: Deflection Control (Green)
     fig.add_trace(go.Bar(
         y=df['Section'], x=df['L_deflect_width'],
         name='Deflection Control', orientation='h',
@@ -108,7 +111,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
         hovertemplate=f"🟢 Deflection Zone (L/{def_limit}): > %{{base:.2f}} m<extra></extra>"
     ))
 
-    # Layer 4: 75% Load
+    # Layer 4: 75% Load Point (Blue Diamond)
     fig.add_trace(go.Scatter(
         x=df['L_75'], y=df['Section'],
         mode='markers', name='Span @ 75% Cap.',
@@ -120,7 +123,7 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     fig.update_layout(
         title="Structural Behavior Timeline (All Beams)",
         barmode='stack', 
-        height=max(600, len(df) * 25),
+        height=max(600, len(df) * 25), # ปรับความสูงตามจำนวนคาน
         xaxis_title="Span Length (m)", 
         yaxis_title="Section",
         legend=dict(orientation="h", y=1.02, x=1, xanchor="right"),
@@ -131,12 +134,12 @@ def render_tab5(method, Fy, E_gpa, def_limit):
     # --- 3. Table ---
     with st.expander("📄 View Detailed Data Table"):
         st.dataframe(
-            df[['Section', 'Weight', 'Ref_Start_Deflect', 'L_75', 'Load_75', 'LTB_Zone']],
+            df[['Section', 'Weight', 'Ref_Start_Deflect', 'L_75', 'Load_75', 'Lp']],
             column_config={
                 "Ref_Start_Deflect": st.column_config.NumberColumn("Deflection Starts (m)", format="%.2f"),
                 "L_75": st.column_config.NumberColumn("Span @ 75% Load (m)", format="%.2f"),
                 "Load_75": st.column_config.NumberColumn("Load @ 75% (kg/m)", format="%d"),
-                "LTB_Zone": "Buckling Mode"
+                "Lp": st.column_config.NumberColumn("Max Unbraced (Lp)", format="%.2f m", help="ระยะค้ำยันสูงสุดที่ยังรับโมเมนต์ได้เต็มพิกัด (Full Plastic Moment)")
             },
             hide_index=True, use_container_width=True
         )
