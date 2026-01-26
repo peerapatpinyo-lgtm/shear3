@@ -17,17 +17,37 @@ def get_max_rows(beam_d, beam_tf, k_dist, margin_top, margin_bot, pitch, lev):
     max_n = int(((available_h - (2 * lev)) / pitch) + 1)
     return max(0, max_n)
 
+def calculate_beam_shear_capacity(beam, Fy, method):
+    """คำนวณ Shear Capacity ของคาน (Vn/Omega หรือ Phi*Vn) เพื่อใช้เป็นฐาน 75%"""
+    # 1. Properties
+    d_mm = beam['D']
+    tw_mm = beam.get('t1', 6.0)
+    
+    # 2. Area Web (cm2)
+    Aw = (d_mm * tw_mm) / 100.0 # convert mm2 to cm2
+    
+    # 3. Nominal Shear Strength (Vn) = 0.6 * Fy * Aw
+    # (อ้างอิง AISC G2 สำหรับ I-shape members)
+    Vn = 0.6 * Fy * Aw # unit: kg
+    
+    # 4. Design Capacity
+    if method == "ASD":
+        # Omega = 1.67 (Standard for Shear)
+        v_cap = Vn / 1.67
+    else:
+        # Phi = 0.9 (Standard for Shear usually 0.9 or 1.0 depending on cv, use 0.9 for conservative design)
+        v_cap = 0.9 * Vn
+        
+    return v_cap
+
 # ==========================================
 # 🏗️ MAIN UI RENDERER
 # ==========================================
-# [UPDATE] รับค่า section_name และ span_m จาก Sidebar (app.py) โดยตรง
 def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     st.markdown(f"### 🏗️ Shear Plate Design ({method} Method)")
     
-    # 1. ดึงข้อมูลจาก Database โดยใช้ชื่อที่ส่งมาจาก Sidebar
-    # (ไม่ต้องสร้าง st.selectbox ให้เลือกซ้ำอีกแล้ว)
+    # 1. ดึงข้อมูลจาก Database
     if section_name not in SYS_H_BEAMS:
-        # กรณีกันเหนียว (Fallback)
         section_name = list(SYS_H_BEAMS.keys())[0]
         
     beam = SYS_H_BEAMS[section_name]
@@ -39,7 +59,7 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     bm_Tf = beam.get('t2', 9.0)
     k_des = 30 
 
-    # 2. คำนวณ Deep Beam Check (จากค่าที่ส่งมา)
+    # 2. Deep Beam Check
     ld_ratio = (span_m * 1000) / bm_D
     is_deep_beam = False
     
@@ -47,11 +67,9 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
 
     # --- INPUT SECTION ---
     with col_input:
-        with st.expander("1️⃣ Beam Info & Verification", expanded=True):
-            # [CHANGE] แสดงชื่อ Section ที่เลือกมาจาก Sidebar แทนการให้เลือกใหม่
+        with st.expander("1️⃣ Beam Info & Load Verification", expanded=True):
             st.info(f"📌 **Current Beam:** `{section_name}`")
             
-            # แสดง Properties ให้ดู (แต่แก้ไขไม่ได้ เพราะต้องแก้ที่ Sidebar)
             st.markdown(f"""
             - **Depth (D):** {bm_D:.0f} mm
             - **Web (Tw):** {bm_Tw} mm
@@ -73,11 +91,35 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
 
             st.markdown("---")
             
-            # Load & Materials (ส่วนนี้ยังให้กรอกได้ เพราะ Load อาจจะไม่เท่ากับ Analysis เสมอไป)
-            c_load, c_mat = st.columns(2)
-            load_label = "Va (kg)" if method == "ASD" else "Vu (kg)"
-            Vu_load = c_load.number_input(load_label, value=5000.0, step=500.0)
-            mat_grade = c_mat.selectbox("Mat.", ["A36", "SS400", "A572-50"])
+            # [UPDATED] Load Input Selection
+            st.markdown("##### 📥 Shear Load Input")
+            
+            # คำนวณ Capacity ของคานเตรียมไว้
+            beam_shear_cap = calculate_beam_shear_capacity(beam, Fy, method)
+            v_75_percent = 0.75 * beam_shear_cap
+            
+            load_mode = st.radio("Select Load Source:", 
+                                 [f"Auto (75% of Capacity)", "Manual Input"],
+                                 horizontal=True)
+            
+            if "Auto" in load_mode:
+                # กรณีเลือก Auto
+                load_label = "Va (ASD)" if method == "ASD" else "Vu (LRFD)"
+                st.info(f"ℹ️ **Beam Capacity:** {beam_shear_cap:,.0f} kg")
+                Vu_load = v_75_percent
+                st.markdown(f"""
+                <div style="padding:10px; background-color:#e8f4f8; border-radius:5px; border:1px solid #b8daff;">
+                    <b>Design Load ({load_label}):</b> <br>
+                    <span style="font-size:20px; color:#004085; font-weight:bold;">{Vu_load:,.0f} kg</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                # กรณีเลือก Manual (ของเดิม)
+                load_label = "Va (kg)" if method == "ASD" else "Vu (kg)"
+                Vu_load = st.number_input(load_label, value=5000.0, step=500.0)
+            
+            # Material Grade
+            mat_grade = st.selectbox("Plate Mat.", ["A36", "SS400", "A572-50"])
 
         with st.expander("2️⃣ Bolt & Connection Details", expanded=True):
             c1, c2 = st.columns(2)
