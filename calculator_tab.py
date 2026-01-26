@@ -5,11 +5,13 @@ def calculate_shear_tab(inputs):
     """
     คำนวณ Shear Tab Connection (Single Plate) ตาม AISC 360-16
     รองรับ: Bolt Shear, Bearing, Shear Yield, Shear Rupture, Block Shear, Weld
+    รองรับ: ASD / LRFD
     """
     
     # 1. UNPACK INPUTS
     # ----------------------------------------------------
-    Vu = inputs['load']          # Factored Load (kg)
+    method = inputs.get('method', 'LRFD') # Default to LRFD if not found
+    Vu = inputs['load']          # Load (kg)
     
     # Beam Properties
     Tw = inputs['beam_tw']       # Beam Web Thickness (mm)
@@ -28,55 +30,59 @@ def calculate_shear_tab(inputs):
     mat_bm = inputs['beam_mat']
     mat_pl = inputs['plate_mat']
     grade_bolt = inputs['bolt_grade']
-    weld_D = inputs['weld_sz']   # Weld size in 1/16 in or mm (input is mm here)
+    weld_D = inputs['weld_sz']   # Weld size in mm
 
     # 2. MATERIAL PROPERTIES DATABASE (ksc)
     # ----------------------------------------------------
-    # Dictionary: Name -> (Fy, Fu) in ksc
     MAT_DB = {
         "SS400": (2400, 4100),
-        "A36":   (2500, 4080),  # Approx 36ksi, 58ksi
+        "A36":   (2500, 4080),
         "SM400": (2400, 4100),
         "A572-50": (3500, 4590),
         "SM520": (3600, 5000)
     }
 
-    # Get Beam Props
     Fy_bm, Fu_bm = MAT_DB.get(mat_bm, (2400, 4100))
-    
-    # Get Plate Props
     Fy_pl, Fu_pl = MAT_DB.get(mat_pl, (2400, 4100))
 
-    # Bolt Shear Strength (Fnv) ksc
-    # A325=A325M, A490=A490M (Approx values converted from ksi/MPa)
-    # A325-N (Threads included): 372 Mpa ~ 3790 ksc
-    # A490-N: 469 MPa ~ 4780 ksc
-    # Gr.8.8: Shear strength approx 0.6*800 MPa = 480 MPa ~ 4890 ksc
     BOLT_DB = {
         "A325": 3790,
         "A490": 4780,
-        "Gr.8.8": 3800 # Conservative
+        "Gr.8.8": 3800
     }
     Fnv = BOLT_DB.get(grade_bolt, 3790)
 
     # 3. GEOMETRY PREP
     # ----------------------------------------------------
-    # Hole diameter (Standard hole)
-    dh = db + 2.0  # mm (Metric standard clearance)
-    
-    # Bolt Area
+    dh = db + 2.0  # Hole diameter
     Ab = math.pi * (db**2) / 400.0  # cm2
 
-    # Resistance Factors (Phi) - LRFD
-    phi_shear_yield = 1.0
-    phi_shear_rupture = 0.75
-    phi_bolt = 0.75
-    phi_bearing = 0.75
-    phi_block = 0.75
-    phi_weld = 0.75
-
-    # 4. CALCULATION MODES
+    # 4. SAFETY FACTORS SETUP (AISC 360-16)
     # ----------------------------------------------------
+    # Dictionary structure: [Omega (ASD), Phi (LRFD)]
+    factors = {
+        'yield':   [1.50, 1.00],
+        'rupture': [2.00, 0.75],
+        'bolt':    [2.00, 0.75],
+        'bearing': [2.00, 0.75],
+        'block':   [2.00, 0.75],
+        'weld':    [2.00, 0.75]
+    }
+
+    def get_capacity(Rn, mode_key):
+        omega, phi = factors[mode_key]
+        if method == "ASD":
+            cap = Rn / omega
+            lab = r"R_n / \Omega"
+            factor_val = omega
+            symbol = "Ω"
+        else: # LRFD
+            cap = phi * Rn
+            lab = r"\phi R_n"
+            factor_val = phi
+            symbol = "φ"
+        return cap, lab, factor_val, symbol
+
     results = {}
     summary_caps = []
 
@@ -85,213 +91,175 @@ def calculate_shear_tab(inputs):
     # Rn = Fnv * Ab * N_bolts
     # ============================================
     Rn_bolt = Fnv * Ab * n
-    phiRn_bolt = phi_bolt * Rn_bolt
+    cap_bolt, lab_bolt, f_bolt, sym_bolt = get_capacity(Rn_bolt, 'bolt')
     
     results['bolt_shear'] = {
         'title': "Bolt Shear",
-        'phi_Rn': phiRn_bolt,
-        'ratio': Vu / phiRn_bolt,
-        'latex_eq': r"\phi R_n = \phi F_{nv} A_b N_{bolt}",
+        'capacity': cap_bolt,
+        'ratio': Vu / cap_bolt,
+        'latex_eq': f"{lab_bolt} = {sym_bolt} F_{{nv}} A_b N_{{bolt}}",
         'calcs': [
-            f"Bolt Grade: {grade_bolt}, Dia: {db} mm",
+            f"Method: {method} ({sym_bolt} = {f_bolt})",
             f"Shear Strength (Fnv): {Fnv} ksc",
             f"Area (Ab): {Ab:.2f} cm² x {n} bolts",
             f"Nominal Rn: {Rn_bolt:,.0f} kg"
         ]
     }
-    summary_caps.append(('Bolt Shear', phiRn_bolt))
+    summary_caps.append(('Bolt Shear', cap_bolt))
 
     # ============================================
-    # MODE 2: BEARING & TEAROUT (Check Both Plate & Beam)
-    # Rn = 1.2 * Lc * t * Fu <= 2.4 * d * t * Fu
+    # MODE 2: BEARING & TEAROUT
     # ============================================
     def calc_bearing(thickness, Fu_mat, edge_dist_v, inner_pitch):
-        # Edge Bolt
         Lc_edge = edge_dist_v - (dh/2.0)
-        Rn_edge = 1.2 * (Lc_edge/10) * (thickness/10) * Fu_mat
-        Max_edge = 2.4 * (db/10) * (thickness/10) * Fu_mat
-        Rn_edge = min(Rn_edge, Max_edge)
+        Rn_edge = min(1.2 * (Lc_edge/10) * (thickness/10) * Fu_mat, 
+                      2.4 * (db/10) * (thickness/10) * Fu_mat)
         
-        # Inner Bolts
         if n > 1:
             Lc_in = inner_pitch - dh
-            Rn_in = 1.2 * (Lc_in/10) * (thickness/10) * Fu_mat
-            Max_in = 2.4 * (db/10) * (thickness/10) * Fu_mat
-            Rn_in = min(Rn_in, Max_in)
-            Rn_total = Rn_edge + (Rn_in * (n-1))
+            Rn_in = min(1.2 * (Lc_in/10) * (thickness/10) * Fu_mat,
+                        2.4 * (db/10) * (thickness/10) * Fu_mat)
+            return Rn_edge + (Rn_in * (n-1))
         else:
-            Rn_total = Rn_edge
-            
-        return Rn_total
+            return Rn_edge
 
-    # Plate Bearing
     Rn_br_pl = calc_bearing(tp, Fu_pl, lev, s)
-    # Beam Bearing (Assume standard edge distance for beam web connection)
-    # Usually beam web is continuous, but effective edge distance matters.
-    # Conservative: Use same LEV as plate or larger. Let's use LEV.
     Rn_br_bm = calc_bearing(Tw, Fu_bm, lev, s)
     
-    phiRn_br = phi_bearing * min(Rn_br_pl, Rn_br_bm)
+    Rn_br_gov = min(Rn_br_pl, Rn_br_bm)
     gov_br = "Plate" if Rn_br_pl < Rn_br_bm else "Beam Web"
+    
+    cap_br, lab_br, f_br, sym_br = get_capacity(Rn_br_gov, 'bearing')
     
     results['bearing'] = {
         'title': f"Bearing & Tearout ({gov_br})",
-        'phi_Rn': phiRn_br,
-        'ratio': Vu / phiRn_br,
-        'latex_eq': r"\phi R_n = \phi (1.2 L_c t F_u \leq 2.4 d t F_u)",
+        'capacity': cap_br,
+        'ratio': Vu / cap_br,
+        'latex_eq': f"{lab_br} = {sym_br} (1.2 L_c t F_u \leq 2.4 d t F_u)",
         'calcs': [
-            f"Plate Cap: {Rn_br_pl:,.0f} kg",
-            f"Beam Web Cap: {Rn_br_bm:,.0f} kg",
-            f"Governing Part: {gov_br}",
-            "Includes checks for both edge bolts and inner bolts"
+            f"Method: {method} ({sym_bolt} = {f_br})",
+            f"Plate Rn: {Rn_br_pl:,.0f} kg",
+            f"Beam Web Rn: {Rn_br_bm:,.0f} kg",
+            f"Governing Part: {gov_br}"
         ]
     }
-    summary_caps.append(('Bearing', phiRn_br))
+    summary_caps.append(('Bearing', cap_br))
 
     # ============================================
     # MODE 3: SHEAR YIELDING (Plate)
     # Rn = 0.6 * Fy * Ag
     # ============================================
-    Ag_pl = (h_pl/10) * (tp/10) # cm2
+    Ag_pl = (h_pl/10) * (tp/10)
     Rn_yld = 0.6 * Fy_pl * Ag_pl
-    phiRn_yld = phi_shear_yield * Rn_yld
+    cap_yld, lab_yld, f_yld, sym_yld = get_capacity(Rn_yld, 'yield')
     
     results['shear_yield'] = {
         'title': "Shear Yield (Plate)",
-        'phi_Rn': phiRn_yld,
-        'ratio': Vu / phiRn_yld,
-        'latex_eq': r"\phi R_n = 1.00 \times 0.6 F_y A_g",
+        'capacity': cap_yld,
+        'ratio': Vu / cap_yld,
+        'latex_eq': f"{lab_yld} = {sym_yld} (0.6 F_y A_g)",
         'calcs': [
+            f"Method: {method} ({sym_yld} = {f_yld})",
             f"Gross Area (Ag): {Ag_pl:.2f} cm²",
             f"Plate Fy: {Fy_pl} ksc",
             f"Nominal Rn: {Rn_yld:,.0f} kg"
         ]
     }
-    summary_caps.append(('Shear Yield', phiRn_yld))
+    summary_caps.append(('Shear Yield', cap_yld))
 
     # ============================================
     # MODE 4: SHEAR RUPTURE (Plate)
     # Rn = 0.6 * Fu * Anv
     # ============================================
-    # Net Area: Cut through vertical line of bolts
     Anv_pl = ((h_pl - (n * dh))/10) * (tp/10)
     Rn_rup = 0.6 * Fu_pl * Anv_pl
-    phiRn_rup = phi_shear_rupture * Rn_rup
+    cap_rup, lab_rup, f_rup, sym_rup = get_capacity(Rn_rup, 'rupture')
     
     results['shear_rupture'] = {
         'title': "Shear Rupture (Plate)",
-        'phi_Rn': phiRn_rup,
-        'ratio': Vu / phiRn_rup,
-        'latex_eq': r"\phi R_n = 0.75 \times 0.6 F_u A_{nv}",
+        'capacity': cap_rup,
+        'ratio': Vu / cap_rup,
+        'latex_eq': f"{lab_rup} = {sym_rup} (0.6 F_u A_{{nv}})",
         'calcs': [
+            f"Method: {method} ({sym_rup} = {f_rup})",
             f"Net Area (Anv): {Anv_pl:.2f} cm²",
-            f"Holes Deducted: {n} x {dh} mm",
             f"Plate Fu: {Fu_pl} ksc",
             f"Nominal Rn: {Rn_rup:,.0f} kg"
         ]
     }
-    summary_caps.append(('Shear Rupture', phiRn_rup))
+    summary_caps.append(('Shear Rupture', cap_rup))
 
     # ============================================
-    # MODE 5: BLOCK SHEAR (Plate & Beam)
-    # Rn = 0.6*Fu*Anv + Ubs*Fu*Ant <= 0.6*Fy*Agv + Ubs*Fu*Ant
+    # MODE 5: BLOCK SHEAR
     # ============================================
     def calc_block_shear(t, Fy, Fu, Le_v, Le_h, n_b, pitch):
-        # 1. Gross Shear Area (Agv): Vertical line
         L_gv = Le_v + (n_b - 1) * pitch
         Agv = (L_gv/10) * (t/10)
-        
-        # 2. Net Shear Area (Anv): Agv minus (n-0.5) holes
         Anv = ((L_gv - (n_b - 0.5) * dh)/10) * (t/10)
-        
-        # 3. Net Tension Area (Ant): Horizontal line
-        # Assuming single column, Ant is from hole center to edge
         Ant = ((Le_h - 0.5 * dh)/10) * (t/10)
-        
-        # Ubs = 1.0 for uniform stress distribution (typical for flat plates)
         Ubs = 1.0
         
-        # Formula J4-5
         term1 = 0.6 * Fu * Anv + Ubs * Fu * Ant
         term2 = 0.6 * Fy * Agv + Ubs * Fu * Ant
-        
-        Rn = min(term1, term2)
-        return Rn, Anv, Ant, Agv
-
-    # Plate Block Shear
-    Rn_bs_pl, Anv_p, Ant_p, Agv_p = calc_block_shear(tp, Fy_pl, Fu_pl, lev, leh, n, s)
+        return min(term1, term2), Anv, Ant
     
-    # Beam Web Block Shear 
-    # (Beam LEV usually equals Plate LEV in simple setup, LEH is Leh_beam)
-    # Assume Leh_beam = Leh_plate for simplicity (or input)
-    Rn_bs_bm, Anv_b, Ant_b, Agv_b = calc_block_shear(Tw, Fy_bm, Fu_bm, lev, leh, n, s) # Using same geom for now
+    Rn_bs_pl, Anv_p, Ant_p = calc_block_shear(tp, Fy_pl, Fu_pl, lev, leh, n, s)
+    Rn_bs_bm, Anv_b, Ant_b = calc_block_shear(Tw, Fy_bm, Fu_bm, lev, leh, n, s)
     
-    phiRn_bs = phi_block * min(Rn_bs_pl, Rn_bs_bm)
+    Rn_bs_gov = min(Rn_bs_pl, Rn_bs_bm)
     gov_bs = "Plate" if Rn_bs_pl < Rn_bs_bm else "Beam Web"
-
+    
+    cap_bs, lab_bs, f_bs, sym_bs = get_capacity(Rn_bs_gov, 'block')
+    
     results['block_shear'] = {
         'title': f"Block Shear ({gov_bs})",
-        'phi_Rn': phiRn_bs,
-        'ratio': Vu / phiRn_bs,
-        'latex_eq': r"\phi R_n = \phi [0.6 F_u A_{nv} + U_{bs} F_u A_{nt}]",
+        'capacity': cap_bs,
+        'ratio': Vu / cap_bs,
+        'latex_eq': f"{lab_bs} = {sym_bs} [0.6 F_u A_{{nv}} + U_{{bs}} F_u A_{{nt}}]",
         'calcs': [
-            "**Governing Limit State:**",
+            f"Method: {method} ({sym_bs} = {f_bs})",
             f"Control Part: {gov_bs}",
             f"Shear Area (Anv): {Anv_p if gov_bs=='Plate' else Anv_b:.2f} cm²",
-            f"Tension Area (Ant): {Ant_p if gov_bs=='Plate' else Ant_b:.2f} cm²",
-            "Checked tearing along bolt line (Shear) + toe (Tension)"
+            f"Tension Area (Ant): {Ant_p if gov_bs=='Plate' else Ant_b:.2f} cm²"
         ]
     }
-    summary_caps.append(('Block Shear', phiRn_bs))
+    summary_caps.append(('Block Shear', cap_bs))
 
     # ============================================
     # MODE 6: WELD STRENGTH
-    # Rn = 0.60 * FEXX * Aw
     # ============================================
-    # E70XX -> FEXX = 70 ksi = 4921 ksc (Use 4900)
-    Fexx = 4900
-    
-    # Effective Throat (te) = 0.707 * size
+    Fexx = 4900 # E70XX
     te = 0.707 * weld_D
-    
-    # Length of Weld (Double Fillet)
-    # Lw = 2 * Plate Height (Simple assumption)
     Lw = 2 * h_pl
-    
-    # Area
-    Aw = (te/10) * (Lw/10) # cm2
+    Aw = (te/10) * (Lw/10)
     
     Rn_weld = 0.6 * Fexx * Aw
-    phiRn_weld = phi_weld * Rn_weld
+    cap_weld, lab_weld, f_weld, sym_weld = get_capacity(Rn_weld, 'weld')
     
     results['weld'] = {
-        'title': "Weld Strength (Double Fillet)",
-        'phi_Rn': phiRn_weld,
-        'ratio': Vu / phiRn_weld,
-        'latex_eq': r"\phi R_n = 0.75 \times 0.6 F_{EXX} A_w",
+        'title': "Weld Strength",
+        'capacity': cap_weld,
+        'ratio': Vu / cap_weld,
+        'latex_eq': f"{lab_weld} = {sym_weld} (0.6 F_{{EXX}} A_w)",
         'calcs': [
-            f"Weld Size: {weld_D} mm",
-            f"Effective Throat: {te:.2f} mm",
-            f"Total Length: {Lw} mm (2 sides)",
-            f"Electrode: E70XX (Fexx = 4900 ksc)"
+            f"Method: {method} ({sym_weld} = {f_weld})",
+            f"Weld Size: {weld_D} mm (Throat: {te:.2f} mm)",
+            f"Total Length: {Lw} mm"
         ]
     }
-    summary_caps.append(('Weld', phiRn_weld))
+    summary_caps.append(('Weld', cap_weld))
 
     # ============================================
     # SUMMARY
     # ============================================
-    # Find minimum capacity
     min_cap = min(summary_caps, key=lambda x: x[1])
     
-    # Check Status
-    status = "PASS" if Vu <= min_cap[1] else "FAIL"
-    
     results['summary'] = {
-        'status': status,
+        'status': "PASS" if Vu <= min_cap[1] else "FAIL",
         'gov_mode': min_cap[0],
         'gov_capacity': min_cap[1],
-        'utilization': Vu / min_cap[1]
+        'utilization': Vu / min_cap[1],
+        'method': method
     }
 
     return results
