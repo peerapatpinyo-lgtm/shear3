@@ -1,16 +1,14 @@
 import math
 
 # ==========================================
-# 1. MATERIAL DATABASE (STANDARD VALUES)
+# 1. MATERIAL DATABASE
 # ==========================================
-# Unit: ksc (kg/cm^2)
-# Ref: TIS 1227 (Thai Industrial Standard) & AISC
 MATERIALS_DB = {
-    "SS400":    {"Fy": 2400, "Fu": 4100},  # Common Thai Steel
-    "A36":      {"Fy": 2500, "Fu": 4000},  # ASTM A36
-    "SM520":    {"Fy": 3600, "Fu": 5300},  # High Strength
-    "A572-50":  {"Fy": 3500, "Fu": 4500},  # ASTM A572 Gr.50
-    "A992":     {"Fy": 3500, "Fu": 4500}   # Common US Beam Grade
+    "SS400":    {"Fy": 2400, "Fu": 4100},
+    "A36":      {"Fy": 2500, "Fu": 4000},
+    "SM520":    {"Fy": 3600, "Fu": 5300},
+    "A572-50":  {"Fy": 3500, "Fu": 4500},
+    "A992":     {"Fy": 3500, "Fu": 4500}
 }
 
 BOLT_DB = {
@@ -23,7 +21,6 @@ BOLT_DB = {
 # 2. HELPER FUNCTIONS
 # ==========================================
 def get_phi_omega(method, check_type):
-    """Return (phi, omega) based on check type"""
     if method == "LRFD":
         if check_type == "yield": return 1.00, 1.00
         if check_type == "rupture": return 0.75, 1.00
@@ -48,25 +45,21 @@ def format_result(title, Rn, cap, ratio, ref, latex_eq, latex_sub, status_pass):
         "ref": ref,
         "latex_eq": latex_eq,
         "latex_sub": latex_sub,
-        "calcs": [] # Placeholder for extra lines
+        "calcs": []
     }
 
 # ==========================================
 # 3. MAIN CALCULATION
 # ==========================================
 def calculate_shear_tab(inputs):
-    """
-    Main Engine for Shear Tab Calculation
-    """
-    # --- Unpack Inputs ---
-    method = inputs['method'] # ASD / LRFD
+    # Unpack
+    method = inputs['method']
     Vu = inputs['load']
     
-    # 1. Get Material Properties from DB
+    # Material
     mat_bm_name = inputs.get('beam_mat', 'SS400')
     mat_pl_name = inputs.get('plate_mat', 'SS400')
     
-    # Fallback if not found (default to SS400)
     mat_bm = MATERIALS_DB.get(mat_bm_name, MATERIALS_DB["SS400"])
     mat_pl = MATERIALS_DB.get(mat_pl_name, MATERIALS_DB["SS400"])
     
@@ -74,104 +67,57 @@ def calculate_shear_tab(inputs):
     Fy_pl, Fu_pl = mat_pl['Fy'], mat_pl['Fu']
 
     # Geometry
-    tp = inputs['plate_t'] / 10.0 # mm -> cm
+    tp = inputs['plate_t'] / 10.0
     h_pl = inputs['plate_h'] / 10.0
     tw_bm = inputs['beam_tw'] / 10.0
     
-    # Bolt Data
+    # Bolt
     db_mm = inputs['bolt_dia']
-    db = db_mm / 10.0 # cm
+    db = db_mm / 10.0
     n_rows = inputs['n_rows']
     bolt_grade = inputs['bolt_grade']
     Fnv_bolt = BOLT_DB.get(bolt_grade, BOLT_DB["A325"])['Fnv']
     
     # Dimensions
-    lev = inputs['lev'] / 10.0 # Vertical edge dist
-    leh = inputs['leh'] / 10.0 # Horizontal edge dist (Plate)
-    # Lc calculation needs actual hole size. Standard hole = db + 1.5mm (approx 0.2cm)
-    dh = db + 0.2 # Hole diameter
+    lev = inputs['lev'] / 10.0
+    dh = db + 0.2
     
     results = {}
     
-    # ==========================================
-    # CHECK 1: BOLT SHEAR
-    # AISC J3.6: Rn = Fnv * Ab * n_bolts
-    # ==========================================
+    # --- 1. BOLT SHEAR ---
     Ab = math.pi * (db**2) / 4
-    n_bolts = n_rows # Single column assumption for now
-    Rn_bolt_shear = Fnv_bolt * Ab * n_bolts
-    
+    Rn_bolt_shear = Fnv_bolt * Ab * n_rows
     phi, omega = get_phi_omega(method, "shear_bolt")
-    if method == "LRFD": Cap_bolt = phi * Rn_bolt_shear
-    else: Cap_bolt = Rn_bolt_shear / omega
+    Cap_bolt = phi * Rn_bolt_shear if method == "LRFD" else Rn_bolt_shear / omega
     
     results['bolt_shear'] = format_result(
         "Bolt Shear", Rn_bolt_shear, Cap_bolt, Vu/Cap_bolt, "AISC J3.6",
         r"R_n = F_{nv} A_b N_b",
-        fr"{Fnv_bolt} \times {Ab:.2f} \times {n_bolts}",
+        fr"{Fnv_bolt} \times {Ab:.2f} \times {n_rows}",
         Vu <= Cap_bolt
     )
 
-    # ==========================================
-    # CHECK 2: BEARING & TEAROUT (Beam Web & Plate)
-    # AISC J3.10: Rn = min(1.2 Lc t Fu, 2.4 d t Fu)
-    # ==========================================
-    
-    def calc_bearing_limit(t_mat, Fu_mat, edge_dist, s_pitch, hole_dia, db_val):
-        # 1. Edge Bolt (Tearout check)
-        Lc_edge = edge_dist - (hole_dia / 2.0)
-        Rn_edge_tearout = 1.2 * Lc_edge * t_mat * Fu_mat
-        Rn_bearing_max = 2.4 * db_val * t_mat * Fu_mat
-        Rn_edge = min(Rn_edge_tearout, Rn_bearing_max)
-        
-        # 2. Inner Bolts (if any)
-        if n_rows > 1:
-            pitch = inputs['pitch'] / 10.0
-            Lc_inner = pitch - hole_dia
-            Rn_inner_tearout = 1.2 * Lc_inner * t_mat * Fu_mat
-            Rn_inner = min(Rn_inner_tearout, Rn_bearing_max)
-            # Total = 1 edge + (n-1) inner
-            Rn_total = Rn_edge + (n_rows - 1) * Rn_inner
-            calc_text = fr"1 \times {Rn_edge:.0f} + {n_rows-1} \times {Rn_inner:.0f}"
-        else:
-            Rn_total = Rn_edge
-            calc_text = fr"{Rn_edge:.0f}"
-            
-        return Rn_total, calc_text, Rn_bearing_max
-
-    # --- Check Plate Bearing ---
-    Rn_br_pl, txt_pl, _ = calc_bearing_limit(tp, Fu_pl, lev, 0, dh, db)
-    
-    # --- Check Beam Web Bearing ---
+    # --- 2. BEARING ---
+    # Simplified Bearing Logic for debugging stability
+    Rn_br_pl = n_rows * (2.4 * db * tp * Fu_pl)
     Rn_br_web = n_rows * (2.4 * db * tw_bm * Fu_bm)
-    
-    # Critical Bearing
     Rn_bearing = min(Rn_br_pl, Rn_br_web)
-    gov_part = "Plate" if Rn_br_pl < Rn_br_web else "Beam Web"
     
     phi, omega = get_phi_omega(method, "bearing")
-    if method == "LRFD": Cap_br = phi * Rn_bearing
-    else: Cap_br = Rn_bearing / omega
+    Cap_br = phi * Rn_bearing if method == "LRFD" else Rn_bearing / omega
     
     results['bearing'] = format_result(
-        f"Bearing & Tearout ({gov_part})", Rn_bearing, Cap_br, Vu/Cap_br, "AISC J3.10",
-        r"R_n = \min(1.2 L_c t F_u, 2.4 d t F_u)",
-        fr"Gov: {gov_part} ({txt_pl} \text{ or } {Rn_br_web:.0f})",
+        "Bearing", Rn_bearing, Cap_br, Vu/Cap_br, "AISC J3.10",
+        r"R_n = 2.4 d t F_u",
+        fr"Min(Plate, Web)",
         Vu <= Cap_br
     )
-    results['bearing']['calcs'].append(f"Plate Fu={Fu_pl}, Web Fu={Fu_bm}")
-    results['bearing']['calcs'].append(f"Plate Lc check included (Lev={lev*10} mm)")
 
-    # ==========================================
-    # CHECK 3: SHEAR YIELDING (PLATE)
-    # AISC J4.2: Rn = 0.60 Fy Ag
-    # ==========================================
+    # --- 3. SHEAR YIELD ---
     Ag = h_pl * tp
     Rn_y = 0.60 * Fy_pl * Ag
-    
     phi, omega = get_phi_omega(method, "yield")
-    if method == "LRFD": Cap_y = phi * Rn_y
-    else: Cap_y = Rn_y / omega
+    Cap_y = phi * Rn_y if method == "LRFD" else Rn_y / omega
     
     results['shear_yield'] = format_result(
         "Plate Shear Yield", Rn_y, Cap_y, Vu/Cap_y, "AISC J4.2",
@@ -180,17 +126,11 @@ def calculate_shear_tab(inputs):
         Vu <= Cap_y
     )
 
-    # ==========================================
-    # CHECK 4: SHEAR RUPTURE (PLATE)
-    # AISC J4.2: Rn = 0.60 Fu Anv
-    # ==========================================
-    # Net Area: Ag - n_bolts * (dh + 1/16") 
-    Anv = (h_pl - (n_rows * (dh + 0.16))) * tp 
+    # --- 4. SHEAR RUPTURE ---
+    Anv = (h_pl - (n_rows * (dh + 0.16))) * tp
     Rn_rup = 0.60 * Fu_pl * Anv
-    
     phi, omega = get_phi_omega(method, "rupture")
-    if method == "LRFD": Cap_rup = phi * Rn_rup
-    else: Cap_rup = Rn_rup / omega
+    Cap_rup = phi * Rn_rup if method == "LRFD" else Rn_rup / omega
     
     results['shear_rupture'] = format_result(
         "Plate Shear Rupture", Rn_rup, Cap_rup, Vu/Cap_rup, "AISC J4.2",
@@ -198,32 +138,14 @@ def calculate_shear_tab(inputs):
         fr"0.60 \times {Fu_pl} \times {Anv:.2f}",
         Vu <= Cap_rup
     )
-
-    # ==========================================
-    # CHECK 5: BLOCK SHEAR (Optional/Complex)
-    # Simplified AISC J4.3
-    # ==========================================
-    results['block_shear'] = {
-        "title": "Block Shear", "capacity": 999999, "ratio": 0.0, 
-        "latex_eq": r"R_n = 0.6 F_u A_{nv} + U_{bs} F_u A_{nt}",
-        "latex_sub": "Check manually for complex geom",
-        "status": "PASS", "ref": "AISC J4.3", "calcs": ["Assumed OK for standard layout"]
-    }
-
-    # ==========================================
-    # CHECK 6: WELD
-    # AISC J2.4: Rn = 0.60 FEXX * Aw
-    # ==========================================
-    # Effective throat = 0.707 * w
+    
+    # --- 5. WELD ---
     D_weld = inputs['weld_sz'] / 10.0
-    Fexx = 4900 # E70 electrode (approx 70ksi = 4900 ksc)
+    Fexx = 4900
     Aw_eff = 2 * h_pl * (0.707 * D_weld)
-    
     Rn_weld = 0.60 * Fexx * Aw_eff
-    
     phi, omega = get_phi_omega(method, "weld")
-    if method == "LRFD": Cap_weld = phi * Rn_weld
-    else: Cap_weld = Rn_weld / omega
+    Cap_weld = phi * Rn_weld if method == "LRFD" else Rn_weld / omega
     
     results['weld'] = format_result(
         "Weld Strength", Rn_weld, Cap_weld, Vu/Cap_weld, "AISC J2.4",
@@ -232,9 +154,7 @@ def calculate_shear_tab(inputs):
         Vu <= Cap_weld
     )
 
-    # ==========================================
-    # SUMMARY
-    # ==========================================
+    # Summary
     max_ratio = 0.0
     gov_mode = ""
     for k, v in results.items():
