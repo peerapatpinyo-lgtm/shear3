@@ -3,7 +3,8 @@ import streamlit as st
 import calculator_tab  # ต้องมีไฟล์ calculator_tab.py ในโฟลเดอร์เดียวกัน
 import drawer_3d       # ต้องมีไฟล์ drawer_3d.py ในโฟลเดอร์เดียวกัน
 
-def render_tab():
+# [FIX] เปลี่ยนชื่อฟังก์ชันให้ตรงกับที่ app.py เรียกใช้ (render_tab -> render_tab6)
+def render_tab6():
     st.markdown("## 🔩 Shear Tab Connection Design (AISC 360-16)")
     st.info("💡 Design Check: Shear Yield, Shear Rupture, Block Shear, Bolt Shear, Bearing & Tearout")
 
@@ -156,4 +157,4 @@ def render_tab():
     st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
-    render_tab()
+    render_tab6()
