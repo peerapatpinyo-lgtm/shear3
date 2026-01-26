@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
@@ -40,14 +41,13 @@ c = core_calculation(L_input, Fy, E_gpa, props, method, def_val)
 final_w = min(c['ws'], c['wm'], c['wd'])
 
 # --- Display Tabs ---
-# [UPDATE] เพิ่ม Tab 6
 t1, t2, t3, t4, t5, t6 = st.tabs([
     "📝 Detail Report", 
     "📊 Behavior Graph", 
     "📋 Capacity Table",
     "📚 Master Catalog",
-    "📊 Timeline Analysis", # เปลี่ยนชื่อให้ตรงกับเนื้อหา (กราฟแท่ง Timeline)
-    "🛠️ Design Check"      # [NEW] Tab 6
+    "📊 Timeline Analysis", 
+    "🛠️ Design Check"       
 ])
 
 with t1:
@@ -143,4 +143,5 @@ with t5:
 
 # [NEW] Render Tab 6
 with t6:
-    render_tab6(method, Fy, E_gpa, def_val)
+    # แก้ไขตรงนี้: ส่งตัวแปร section และ L_input เพิ่มเข้าไป เพื่อแก้ TypeError
+    render_tab6(method, Fy, E_gpa, def_val, section, L_input)
