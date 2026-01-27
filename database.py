@@ -1,8 +1,8 @@
 # database.py
+import math
 
 # Dictionary เก็บคุณสมบัติหน้าตัดเหล็ก H-Beam (JIS/TIS Standard)
 # หน่วย: Dimension=mm, Weight=kg/m, Area=cm2, Inertia=cm4, Modulus=cm3
-# เพิ่ม keys: 'B' (Width), 'tf' (Flange Thickness) สำหรับคำนวณ LTB
 
 SYS_H_BEAMS = {
     "H-100x50x5x7": { 
@@ -138,3 +138,30 @@ SYS_H_BEAMS = {
         "W": 243.0, "Ix": 404000, "Zx": 8980, "Iy": 12600, "Zy": 841 
     }
 }
+
+# --- Post-Processing to Ensure Completeness (Engineering Fix) ---
+for key, val in SYS_H_BEAMS.items():
+    # Convert dimensions from mm to cm for calculation check
+    D_cm = val['D'] / 10
+    B_cm = val['B'] / 10
+    tw_cm = val['tw'] / 10
+    tf_cm = val['tf'] / 10
+    
+    # 1. Fill missing 'r' (Radius of fillet)
+    # Estimate r approx equal to tf if not present (Safe assumption for general hot-rolled)
+    if 'r' not in val:
+        val['r'] = val['tf'] 
+    
+    # 2. Fill missing 'A' (Area in cm2)
+    # If not present, calculate precisely from Weight (kg/m) / 0.785 (Steel Density)
+    if 'A' not in val:
+        val['A'] = val['W'] / 0.785
+    
+    # 3. Fill missing 'ry' (Radius of Gyration Y-axis in cm)
+    # ry = sqrt(Iy / A)
+    if 'ry' not in val:
+        val['ry'] = math.sqrt(val['Iy'] / val['A'])
+
+    # 4. Fill missing 'Sx' (Elastic Modulus)
+    if 'Sx' not in val:
+        val['Sx'] = val['Ix'] / (D_cm / 2)
