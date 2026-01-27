@@ -1,120 +1,178 @@
+#calculator_tab.py
 import math
 
-def check_geometry(inputs):
-    """ตรวจสอบระยะห่างโบลต์และระยะขอบตามมาตรฐาน"""
-    msgs = []
-    db, pitch, lev, leh = inputs['bolt_dia'], inputs['pitch'], inputs['lev'], inputs['leh_beam']
-    
-    # Min spacing = 2.67 * dia
-    min_spa = 2.67 * db
-    if pitch < min_spa: 
-        msgs.append(f"Bolt Pitch ({pitch}mm) < Min ({min_spa:.1f}mm)")
-    
-    # Min Edge distance (AISC Table J3.4)
-    min_e = 22 if db <= 16 else (26 if db <= 20 else 30)
-    if lev < min_e: 
-        msgs.append(f"V-Edge ({lev}mm) < Min ({min_e}mm)")
-    if leh < min_e: 
-        msgs.append(f"H-Edge ({leh}mm) < Min ({min_e}mm)")
-    return msgs
+# ==============================================================================
+# 🧠 CALCULATOR MODULE: SHEAR TAB (DETAILED REPORT VERSION)
+# ==============================================================================
+
+MATERIALS = {
+    "A36":     {"Fy": 2500, "Fu": 4000},
+    "A572-50": {"Fy": 3450, "Fu": 4500},
+    "SS400":   {"Fy": 2400, "Fu": 4100},
+    "SM490":   {"Fy": 3300, "Fu": 5000},
+    "A325":    {"Fnv": 3720, "Fnt": 6200}, 
+    "A490":    {"Fnv": 4690, "Fnt": 7800},
+    "Gr.8.8":  {"Fnv": 3750, "Fnt": 8000}
+}
+
+PHI = {
+    "yield": 1.00, "rupture": 0.75, "bolt_shear": 0.75,
+    "bearing": 0.75, "block": 0.75, "weld": 0.75
+}
 
 def calculate_shear_tab(inputs):
-    res = {}
-    geo_errs = check_geometry(inputs)
-    if geo_errs: return {'critical_error': True, 'errors': geo_errs}
+    # --- 1. PREPARE DATA ---
+    Vu = float(inputs.get('load', 0))
+    t_w = inputs['beam_tw'] / 10.0
+    t_p = inputs['plate_t'] / 10.0
+    h_p = inputs['plate_h'] / 10.0
+    d_b = inputs['bolt_dia'] / 10.0
+    w_sz = inputs['weld_sz'] / 10.0
+    pitch = inputs['pitch'] / 10.0
+    lev = inputs['lev'] / 10.0
+    n_rows = int(inputs['n_rows'])
+    
+    mat_bm = MATERIALS.get(inputs.get('beam_mat', 'A36'), MATERIALS['A36'])
+    mat_pl = MATERIALS.get(inputs.get('plate_mat', 'A36'), MATERIALS['A36'])
+    mat_bolt = MATERIALS.get(inputs.get('bolt_grade', 'A325'), MATERIALS['A325'])
+    
+    d_hole = d_b + 0.2 
+    results = {}
 
-    # --- Setup Data (Convert mm to cm) ---
-    meth, Vu = inputs['method'], inputs['load']
-    tp = inputs['plate_t'] / 10
-    h_pl = inputs['plate_h'] / 10
-    lev = inputs['lev'] / 10
-    leh = inputs['leh_beam'] / 10  # ใช้ leh ฝั่งคาน (ระยะขอบแนวนอน)
-    tw_bm = inputs['beam_tw'] / 10
-    db = inputs['bolt_dia'] / 10
-    
-    Ab = (math.pi * db**2) / 4
-    n = inputs['n_rows']
-    
-    Fy_pl, Fu_pl = 2500, 4100  # SS400
-    Fu_bm = 4000 if inputs['beam_fy'] <= 2500 else 4500
-    
-    # --- [Safety Update] 1. Hole Size (+4mm for damage allowance) ---
-    hole_dia = db + 0.4 
-    
-    # --- [Safety Update] 2. Bolt Shear Stress (Threads Included) ---
-    # A325 -> 3300 ksc, A490 -> 4100 ksc
-    Fnv = 4100 if "A490" in inputs['bolt_grade'] else 3300
+    # ==========================================================================
+    # 1. 🔩 BOLT SHEAR
+    # ==========================================================================
+    Ab = math.pi * (d_b**2) / 4
+    Fnv = mat_bolt['Fnv']
+    Rn_bolt = Fnv * Ab * n_rows
+    phi_Rn_bolt = PHI['bolt_shear'] * Rn_bolt
+    
+    results['bolt_shear'] = {
+        "title": "1. Bolt Shear Strength (แรงเฉือนสลักเกลียว)",
+        "phi_Rn": phi_Rn_bolt,
+        "ratio": Vu / phi_Rn_bolt if phi_Rn_bolt > 0 else 999,
+        "latex_eq": r"\phi R_n = \phi \times F_{nv} \times A_b \times N_{rows}",
+        "calcs": [
+            f"Bolt Area (Ab) = π × ({d_b:.2f})² / 4 = {Ab:.2f} cm²",
+            f"Nominal Shear (Rn) = {mat_bolt['Fnv']} × {Ab:.2f} × {n_rows} = {Rn_bolt:.0f} kg",
+            f"Design Strength (φRn) = {PHI['bolt_shear']} × {Rn_bolt:.0f} = {phi_Rn_bolt:.0f} kg"
+        ]
+    }
 
-    # --- Safety Factors (AISC 360-16) ---
-    is_asd = (meth == "ASD")
-    # Yielding: Phi=1.00, Omega=1.50
-    f_yield, sf_yield_txt = (1/1.50, "1.50") if is_asd else (1.00, "1.00")
-    # Critical (Bolt, Rupture, Block Shear): Phi=0.75, Omega=2.00
-    f_critical, sf_critical_txt = (1/2.00, "2.00") if is_asd else (0.75, "0.75")
+    # ==========================================================================
+    # 2. 🧱 BEARING (Plate & Beam)
+    # ==========================================================================
+    # Helper to generate text for bearing
+    def get_bearing_text(comp_name, t, Fu, edge_dist):
+        Lc_edge = edge_dist - (d_hole / 2)
+        Rn_edge = min(1.2 * Lc_edge * t * Fu, 2.4 * d_b * t * Fu)
+        Rn_inner_total = 0
+        
+        detail_txt = [f"**Check {comp_name} (t={t*10:.0f}mm):**"]
+        detail_txt.append(f"- Lc (edge) = {edge_dist} - ({d_hole}/2) = {Lc_edge:.2f} cm")
+        
+        if n_rows > 1:
+            Lc_inner = pitch - d_hole
+            Rn_inner_1 = min(1.2 * Lc_inner * t * Fu, 2.4 * d_b * t * Fu)
+            Rn_inner_total = Rn_inner_1 * (n_rows - 1)
+            detail_txt.append(f"- Lc (inner) = {pitch} - {d_hole} = {Lc_inner:.2f} cm (x{n_rows-1} bolts)")
+        
+        Rn_total = Rn_edge + Rn_inner_total
+        phi_Rn = PHI['bearing'] * Rn_total
+        
+        detail_txt.append(f"- Rn (Total) = {Rn_edge:.0f} (Edge) + {Rn_inner_total:.0f} (Inner) = {Rn_total:.0f} kg")
+        detail_txt.append(f"- φRn = {PHI['bearing']} × {Rn_total:.0f} = {phi_Rn:.0f} kg")
+        
+        return phi_Rn, detail_txt
 
-    # --- 1. Bolt Shear Strength ---
-    Rn_bolt = Fnv * Ab * n
-    res['bolt_shear'] = {
-        'title': '1. Bolt Shear Strength',
-        'formula': r"R_n = F_{nv} A_b n",
-        'subst': rf"{Fnv:,} \times {Ab:.2f} \times {n}",
-        'rn': Rn_bolt, 'sf': sf_critical_txt,
-        'design_val': Rn_bolt * f_critical, 'ratio': Vu / (Rn_bolt * f_critical)
-    }
+    # 2.1 Plate
+    phi_bear_pl, txt_pl = get_bearing_text("Plate", t_p, mat_pl['Fu'], lev)
+    # 2.2 Beam Web
+    phi_bear_bm, txt_bm = get_bearing_text("Beam Web", t_w, mat_bm['Fu'], lev)
+    
+    if phi_bear_pl < phi_bear_bm:
+        bear_val, bear_calcs = phi_bear_pl, txt_pl
+        control_txt = "(Plate Controls)"
+    else:
+        bear_val, bear_calcs = phi_bear_bm, txt_bm
+        control_txt = "(Beam Web Controls)"
+        
+    results['bearing'] = {
+        "title": f"2. Bolt Bearing Strength {control_txt}",
+        "phi_Rn": bear_val,
+        "ratio": Vu / bear_val if bear_val > 0 else 999,
+        "latex_eq": r"\phi R_n = \phi (1.2 L_c t F_u \leq 2.4 d t F_u)",
+        "calcs": bear_calcs
+    }
 
-    # --- 2. Bolt Bearing (on Plate) ---
-    lc_pl = lev - (hole_dia/2)
-    rn_unit = min(1.2 * lc_pl * tp * Fu_pl, 2.4 * db * tp * Fu_pl)
-    Rn_bear = rn_unit * n
-    res['bearing'] = {
-        'title': '2. Bolt Bearing',
-        'formula': r"R_n = n \times \min(1.2 l_c t F_u, 2.4 d t F_u)",
-        'subst': rf"{n} \times {rn_unit:.0f}",
-        'rn': Rn_bear, 'sf': sf_critical_txt,
-        'design_val': Rn_bear * f_critical, 'ratio': Vu / (Rn_bear * f_critical)
-    }
+    # ==========================================================================
+    # 3. 📏 SHEAR YIELDING
+    # ==========================================================================
+    Ag = h_p * t_p
+    Rn_y = 0.60 * mat_pl['Fy'] * Ag
+    phi_Rn_y = PHI['yield'] * Rn_y
+    
+    results['shear_yield'] = {
+        "title": "3. Shear Yielding (เพลทคราก)",
+        "phi_Rn": phi_Rn_y,
+        "ratio": Vu / phi_Rn_y if phi_Rn_y > 0 else 999,
+        "latex_eq": r"\phi R_n = 1.00 \times 0.60 F_y A_g",
+        "calcs": [
+            f"Gross Area (Ag) = {h_p} × {t_p} = {Ag:.2f} cm²",
+            f"Nominal Strength (Rn) = 0.60 × {mat_pl['Fy']} × {Ag:.2f} = {Rn_y:.0f} kg",
+            f"Design Strength (φRn) = 1.00 × {Rn_y:.0f} = {phi_Rn_y:.0f} kg"
+        ]
+    }
 
-    # --- 3. Plate Shear Yielding ---
-    Ag = h_pl * tp
-    Rn_y = 0.60 * Fy_pl * Ag
-    res['shear_yield'] = {
-        'title': '3. Plate Shear Yielding',
-        'formula': r"R_n = 0.60 F_y A_g",
-        'subst': rf"0.6 \times {Fy_pl:,} \times {Ag:.2f}",
-        'rn': Rn_y, 'sf': sf_yield_txt,
-        'design_val': Rn_y * f_yield, 'ratio': Vu / (Rn_y * f_yield)
-    }
+    # ==========================================================================
+    # 4. ✂️ SHEAR RUPTURE
+    # ==========================================================================
+    Anv = (h_p - (n_rows * d_hole)) * t_p
+    Rn_r = 0.60 * mat_pl['Fu'] * Anv
+    phi_Rn_r = PHI['rupture'] * Rn_r
+    
+    results['shear_rupture'] = {
+        "title": "4. Shear Rupture (เพลทขาด)",
+        "phi_Rn": phi_Rn_r,
+        "ratio": Vu / phi_Rn_r if phi_Rn_r > 0 else 999,
+        "latex_eq": r"\phi R_n = 0.75 \times 0.60 F_u A_{nv}",
+        "calcs": [
+            f"Net Area (Anv) = [{h_p} - ({n_rows}×{d_hole})] × {t_p} = {Anv:.2f} cm²",
+            f"Nominal Strength (Rn) = 0.60 × {mat_pl['Fu']} × {Anv:.2f} = {Rn_r:.0f} kg",
+            f"Design Strength (φRn) = 0.75 × {Rn_r:.0f} = {phi_Rn_r:.0f} kg"
+        ]
+    }
 
-    # --- 4. Plate Shear Rupture ---
-    Anv = Ag - (n * hole_dia * tp)
-    Rn_r = 0.60 * Fu_pl * Anv
-    res['shear_rup'] = {
-        'title': '4. Plate Shear Rupture',
-        'formula': r"R_n = 0.60 F_u A_{nv}",
-        'subst': rf"0.6 \times {Fu_pl:,} \times {Anv:.2f}",
-        'rn': Rn_r, 'sf': sf_critical_txt,
-        'design_val': Rn_r * f_critical, 'ratio': Vu / (Rn_r * f_critical)
-    }
+    # ==========================================================================
+    # 5. 🔥 WELD STRENGTH
+    # ==========================================================================
+    Fexx = 4900 # E70
+    Rn_weld = 0.707 * w_sz * h_p * 0.60 * Fexx * 2 
+    phi_Rn_weld = PHI['weld'] * Rn_weld
+    
+    results['weld'] = {
+        "title": "5. Weld Strength (รอยเชื่อม)",
+        "phi_Rn": phi_Rn_weld,
+        "ratio": Vu / phi_Rn_weld if phi_Rn_weld > 0 else 999,
+        "latex_eq": r"\phi R_n = 0.75 \times 0.707 w L (0.6 F_{exx}) \times 2",
+        "calcs": [
+            f"Weld Size (w) = {w_sz*10:.0f} mm ({w_sz} cm)",
+            f"Weld Length (L) = {h_p} cm (Double Fillet)",
+            f"Design Strength (φRn) = {PHI['weld']} × 0.707 × {w_sz} × {h_p} × (0.6×{Fexx}) × 2 = {phi_Rn_weld:.0f} kg"
+        ]
+    }
 
-    # --- 5. [NEW] Block Shear Rupture ---
-    # คำนวณพื้นที่ตามสมการที่ได้รับมา
-    Agv = (h_pl - lev) * tp
-    Anv_bs = Agv - ((n - 0.5) * hole_dia * tp)
-    Ant_bs = (leh * tp) - (0.5 * hole_dia * tp)
-    
-    Ubs = 1.0 # Standard for single row of bolts
-    
-    # Rn = min(0.6 Fu Anv + Ubs Fu Ant, 0.6 Fy Agv + Ubs Fu Ant)
-    term1 = (0.60 * Fu_pl * Anv_bs) + (Ubs * Fu_pl * Ant_bs)
-    term2 = (0.60 * Fy_pl * Agv) + (Ubs * Fu_pl * Ant_bs)
-    Rn_bs = min(term1, term2)
-    
-    res['block_shear'] = {
-        'title': '5. Block Shear Rupture',
-        'formula': r"R_n = \min(0.6 F_u A_{nv} + U_{bs} F_u A_{nt}, 0.6 F_y A_{gv} + ...)",
-        'subst': rf"\min({term1:,.0f}, {term2:,.0f})",
-        'rn': Rn_bs, 'sf': sf_critical_txt,
-        'design_val': Rn_bs * f_critical, 'ratio': Vu / (Rn_bs * f_critical)
-    }
-
-    return res
+    # --- SUMMARY ---
+    min_phi_Rn = min(phi_Rn_bolt, bear_val, phi_Rn_y, phi_Rn_r, phi_Rn_weld)
+    status = "PASS" if min_phi_Rn >= Vu else "FAIL"
+    
+    sorted_modes = sorted(results.items(), key=lambda item: item[1]['ratio'], reverse=True)
+    
+    results['summary'] = {
+        "status": status,
+        "gov_capacity": min_phi_Rn,
+        "gov_mode": sorted_modes[0][1]['title'],
+        "utilization": Vu / min_phi_Rn if min_phi_Rn > 0 else 0.0
+    }
+    
+    return results
