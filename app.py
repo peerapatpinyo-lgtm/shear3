@@ -13,7 +13,7 @@ from tab7_typical import render_tab7  # [NEW] Typical Detail Summary
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
-st.title("🏗️ SYS H-Beam: Professional Design Tool")
+st.title("🏗️  H-Beam: Professional Design Tool")
 
 # --- Sidebar ---
 with st.sidebar:
