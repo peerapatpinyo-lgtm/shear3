@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
@@ -20,8 +19,10 @@ st.title("🏗️ SYS H-Beam: Professional Design Tool")
 with st.sidebar:
     st.header("1. Design Criteria")
     method = st.radio("Method", ["ASD", "LRFD"])
-    Fy = st.number_input("Fy (Yield Strength) [ksc]", value=2400)
-    E_gpa = st.number_input("E (Modulus) [GPa]", value=200)
+    
+    # [แก้ไขข้อ 3] Input Validation: ป้องกันค่า 0 เพื่อไม่ให้เกิด ZeroDivisionError
+    Fy = st.number_input("Fy (Yield Strength) [ksc]", min_value=100, value=2400, step=100)
+    E_gpa = st.number_input("E (Modulus) [GPa]", min_value=1, value=200)
     
     st.write("---")
     st.write("**Deflection Limit:**")
@@ -31,8 +32,13 @@ with st.sidebar:
     def_val = int(def_option.split('/')[1].split()[0])
     
     st.header("2. Single Section Analysis")
-    sort_list = sorted(SYS_H_BEAMS.keys(), key=lambda x: int(x.split('x')[0].split('-')[1]))
-    section = st.selectbox("Select Size to Analyze", sort_list, index=8)
+    # [แก้ไขข้อ 4] Robust Sorting: เรียงลำดับหน้าตัดตาม Depth (D) และ Weight (W)
+    sort_list = sorted(SYS_H_BEAMS.keys(), key=lambda x: (SYS_H_BEAMS[x]['D'], SYS_H_BEAMS[x]['W']))
+    
+    # เลือกค่า Default เป็นตัวที่ 8 (หรือตัวแรกถ้าข้อมูลน้อยกว่านั้น)
+    default_idx = 8 if len(sort_list) > 8 else 0
+    section = st.selectbox("Select Size to Analyze", sort_list, index=default_idx)
+    
     L_input = st.slider("Span Length (m)", 2.0, 30.0, 6.0, 0.5)
 
 # --- Process ---
@@ -47,7 +53,7 @@ t1, t2, t3, t4, t5, t6 = st.tabs([
     "📋 Capacity Table",
     "📚 Master Catalog",
     "📊 Timeline Analysis", 
-    "🛠️ Design Check"       
+    "🛠️ Design Check"        
 ])
 
 with t1:
@@ -58,9 +64,11 @@ with t2:
     st.subheader(f"📈 Capacity Envelope Analysis: {section}")
     st.caption(f"Load Capacity Envelope (Deflection Limit: **L/{def_val}**)")
 
+    # เพิ่ม Safety Check ป้องกันการหารด้วยศูนย์ในกราฟ
     L_max = max(15, c['L_md']*1.2, L_input*1.5)
     x = np.linspace(0.5, L_max, 400)
     
+    # คำนวณเส้นกราฟ (ระวังการหารด้วย 0 ใน x แต่ linspace เริ่มที่ 0.5 ปลอดภัยแล้ว)
     ys = (2 * c['V_des'] / (x*100)) * 100 
     ym = (8 * c['M_des'] / (x*100)**2) * 100 
     
@@ -115,7 +123,8 @@ with t2:
         fig.add_annotation(x=c['L_vm']/2, y=y_lim*0.9, text="SHEAR", showarrow=False, font=dict(color="#d9534f", weight="bold"))
     
     fig.add_vrect(x0=c['L_vm'], x1=c['L_md'], fillcolor="#f0ad4e", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, font=dict(color="#f0ad4e", weight="bold"))
+    if c['L_md'] > c['L_vm']: # ตรวจสอบก่อนวาด Annotation
+        fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, font=dict(color="#f0ad4e", weight="bold"))
     
     fig.add_vrect(x0=c['L_md'], x1=L_max, fillcolor="#5cb85c", opacity=0.05, layer="below", line_width=0)
     fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim*0.9, text="DEFLECTION", showarrow=False, font=dict(color="#5cb85c", weight="bold"))
