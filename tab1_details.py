@@ -129,19 +129,22 @@ def render_tab1(c, props, method, Fy, section):
 
     # === 4. DEFLECTION ===
     st.subheader("4. Deflection Control")
-    
-    # [UPDATED Logic] Fetch selected Limit
     limit_val = c.get('def_limit', 360) 
     
-    st.write(f"Allowable Deflection Limit (**L/{limit_val}**):")
-    st.latex(rf"\delta_{{allow}} = \frac{{{c['L_cm']:.0f} \text{{ (Span)}}}}{{{limit_val}}} = \mathbf{{{c['delta']:.2f}}} \text{{ cm}}")
+    col_d1, col_d2 = st.columns([2, 1])
+    with col_d1:
+        st.write(f"Allowable Deflection Limit (**L/{limit_val}**):")
+        st.latex(rf"\delta_{{allow}} = \frac{{{c['L_cm']:.0f}}}{{{limit_val}}} = \mathbf{{{c['delta']:.2f}}} \text{{ cm}}")
     
+    with col_d2:
+        # Deflection Utilization Visualizer (Assuming we check against current capacity)
+        st.write("**Deflection Limit Capacity**")
+        st.progress(1.0, help="This bar represents the full 100% allowable limit reached by w_d")
+        st.caption(f"Max Allowable: {c['delta']:.2f} cm")
+
     st.markdown("**Step 4.1: Convert to Safe Uniform Load ($w_d$)**")
-    st.write(f"Using $I_x = {props['Ix']:,}$ cm⁴ and $E = {c['E_ksc']:,.0f}$ ksc")
-    
-    st.latex(rf"w_d = \frac{{384 \times E \times I_x \times \delta_{{allow}}}}{{5 \times L^4}} \times 100")
-    st.latex(rf"w_d = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,} \times {c['delta']:.2f}}}{{5 \times {c['L_cm']:.0f}^4}} \times 100")
-    st.latex(rf"\therefore w_d = \mathbf{{{c['wd']:,.0f}}} \text{{ kg/m}}")
+    st.latex(r"w_d = \frac{384 \cdot E \cdot I_x \cdot \delta_{allow}}{5 \cdot L^4} \times 100")
+    st.latex(rf"w_d = \frac{{384 \cdot {c['E_ksc']:,.0f} \cdot {props['Ix']:,} \cdot {c['delta']:.2f}}}{{5 \cdot {c['L_cm']:.0f}^4}} \times 100 = \mathbf{{{c['wd']:,.0f}}} \text{{ kg/m}}")
     
     st.markdown("---")
 
@@ -151,60 +154,59 @@ def render_tab1(c, props, method, Fy, section):
     final_w = min(c['ws'], c['wm'], c['wd'])
     net_w = max(0, final_w - props['W'])
     
+    # Comparison Table
+    summary_data = [
+        {"Limit State": "Shear Strength", "Capacity (kg/m)": f"{c['ws']:,.0f}", "Status": "Pass" if c['ws'] >= final_w else "-"},
+        {"Limit State": f"Moment ({c['Zone']})", "Capacity (kg/m)": f"{c['wm']:,.0f}", "Status": "Pass" if c['wm'] >= final_w else "-"},
+        {"Limit State": f"Deflection (L/{limit_val})", "Capacity (kg/m)": f"{c['wd']:,.0f}", "Status": "Pass" if c['wd'] >= final_w else "-"}
+    ]
+    st.table(summary_data)
+
+    if c['ws'] == final_w: ctrl = "Shear Control"
+    elif c['wm'] == final_w: ctrl = f"Moment Control ({c['Zone']})"
+    else: ctrl = f"Deflection Control (L/{limit_val})"
+
     res_col1, res_col2 = st.columns(2)
     with res_col1:
-        if c['ws'] == final_w: ctrl = "Shear Control"
-        elif c['wm'] == final_w: ctrl = f"Moment Control ({c['Zone']})"
-        else: ctrl = f"Deflection Control (L/{limit_val})"
-        
         st.info(f"**Governing Case:** {ctrl}")
-        st.write(f"- Shear Capacity: {c['ws']:,.0f} kg/m")
-        st.write(f"- Moment Capacity: {c['wm']:,.0f} kg/m")
-        st.write(f"- Deflection Limit: {c['wd']:,.0f} kg/m")
+        st.write(f"The maximum total load the beam can support is limited by **{ctrl}**.")
     
     with res_col2:
         st.success(f"✅ **Safe Net Load Capacity:**")
-        st.metric(label="Net Load (Excluding Beam Weight)", value=f"{net_w:,.0f} kg/m")
-        st.caption(f"*Beam self-weight ({props['W']} kg/m) deducted.")
+        st.metric(label="Net Load (Excluding Self-Weight)", value=f"{net_w:,.0f} kg/m")
+        st.caption(f"*Beam self-weight {props['W']} kg/m already deducted.")
 
     st.markdown("---")
 
     # === 6. TRANSITION DERIVATION ===
     st.subheader("6. Derivation of Critical Lengths")
-    st.caption("Critical Length ($L$) is where the capacity of two failure modes are exactly equal.")
+    st.caption("Calculating the transition points where failure modes switch.")
 
-    with st.expander("Show Formula Derivation & Calculation"):
+    with st.expander("🔍 Show Formula Derivation (Aligned)"):
         # CASE 1: Shear vs Moment
         st.markdown("#### 6.1 Shear $\leftrightarrow$ Moment Transition ($L_{v-m}$)")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Setup Equation:**")
-            st.latex(r"L = \frac{4 M_{full}}{V_{design}}")
-        with c2:
-            st.markdown("**Substitution:**")
-            # Using M_des_full to ensure consistency with the table
-            st.latex(rf"L = \frac{{4 \times {c['M_des_full']:,.0f}}}{{{c['V_des']:,.0f}}} = {c['L_vm']*100:,.1f} \text{{ cm}}")
-            st.success(f"= {c['L_vm']:.2f} m")
+        st.latex(rf"""
+        \begin{aligned}
+        w_s &= w_m \\
+        \frac{{2 \cdot V_{{des}}}}{{L}} &= \frac{{8 \cdot M_{{des}}}}{{L^2}} \\
+        L_{{v-m}} &= \frac{{4 \cdot M_{{des}}}}{{V_{{des}}}} \\
+        L_{{v-m}} &= \frac{{4 \cdot {c['M_des_full']:,.0f}}}{{{c['V_des']:,.0f}}} = \mathbf{{{c['L_vm']:.2f}}} \text{{ m}}
+        \end{aligned}
+        """)
 
-        st.markdown("---")
+        st.divider()
 
-        # CASE 2: Moment vs Deflection (UPDATED Dynamic Formula)
+        # CASE 2: Moment vs Deflection
         st.markdown("#### 6.2 Moment $\leftrightarrow$ Deflection Transition ($L_{m-d}$)")
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown("**Setup Equation:**")
-            st.write(f"Equating Moment ($w_m$) and Deflection ($w_d$) at $L/{limit_val}$:")
-            # Using M_full in formula
-            st.latex(rf"L = \frac{{384 E I}}{{40 \times M_{{full}} \times {limit_val}}}")
-        
-        with c4:
-            st.markdown("**Substitution:**")
-            # Using M_des_full to ensure consistency with the table
-            denom_val = 40 * c['M_des_full'] * limit_val
-            st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{{denom_val:,.0f}}}")
-            st.latex(rf"L = {c['L_md']*100:,.1f} \text{{ cm}}")
-            st.success(f"= {c['L_md']:.2f} m")
+        st.latex(rf"""
+        \begin{aligned}
+        w_m &= w_d \\
+        \frac{{8 \cdot M_{{des}}}}{{L^2}} &= \frac{{384 \cdot E \cdot I \cdot (L/{limit_val})}}{{5 \cdot L^4}} \\
+        L^2 &= \frac{{384 \cdot E \cdot I}}{{40 \cdot M_{{des}} \cdot {limit_val}}} \\
+        L_{{m-d}} &= \sqrt{{\frac{{384 \cdot {c['E_ksc']:,.0f} \cdot {props['Ix']:,}}}{{40 \cdot {c['M_des_full']:,.0f} \cdot {limit_val}}}}} = \mathbf{{{c['L_md']:.2f}}} \text{{ m}}
+        \end{aligned}
+        """)
 
     col_sum1, col_sum2 = st.columns(2)
-    col_sum1.info(f"**📍 Shear/Moment Switch:** $L = {c['L_vm']:.2f}$ m")
-    col_sum2.info(f"**📍 Moment/Deflection Switch:** $L = {c['L_md']:.2f}$ m")
+    col_sum1.info(f"**📍 Shear/Moment Switch:** {c['L_vm']:.2f} m")
+    col_sum2.info(f"**📍 Moment/Deflection Switch:** {c['L_md']:.2f} m")
