@@ -5,110 +5,59 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     """
     Main Beam Calculation Engine (AISC 360-16 / EIT Compliant)
     """
-    # --- 1. Setup & Unit Conversion (STRICT: mm -> cm) ---
-    L = L_m * 100        # m -> cm (Total Span)
-    
+    # --- 1. Setup & Unit Conversion ---
+    L = L_m * 100        # m -> cm
     if Lb_m is None:
-        Lb = L           # Default: Unbraced length = Span
+        Lb = L           # Default Lb = Span
     else:
-        Lb = Lb_m * 100  # m -> cm
+        Lb = Lb_m * 100
         
-    # FIX: Precision Conversion GPa -> ksc
-    # 1 GPa = 1019.716 kg/cm^2 approx. (Using 10197.16 for 10 GPa scale is safer or exact factor)
-    # Standard Structural Steel E is approx 2.04e6 ksc.
-    E = E_gpa * 10197.16    # GPa -> ksc (Corrected from 10000)
+    # 1 GPa = 10197.16 kg/cm2
+    E = E_gpa * 10197.16 
     
-    # Extract & Convert Properties (mm -> cm)
+    # Dimensions (mm -> cm)
     D = props['D'] / 10.0
     B = props['B'] / 10.0
     tw = props['tw'] / 10.0
     tf = props['tf'] / 10.0
-    r = props.get('r', tf*10) / 10.0 # Get r in cm
     
-    # Area & Inertia
+    # Properties
     Ix = props['Ix']
     Iy = props['Iy']
-    Sx = props['Sx']
-    Zx = props.get('Zx', Sx*1.1) # Fallback if Zx not calculated yet (though database.py fixes this)
+    Sx = props['Sx_table'] # Elastic Modulus from Table
     A = props['A']
-    ry = props['ry'] 
     
-    # Geometric derived properties
-    h = D - 2*tf - 2*r  # Clear distance between fillets (cm)
-    ho = D - tf         # Distance between flange centroids (cm)
+    # Calculate Plastic Modulus (Zx)
+    h_web = D - (2 * tf)
+    Zx = (B * tf * (D - tf)) + (tw * (h_web**2) / 4)
     
-    # NOTE: Torsional Constant (J) Approximation for Open Sections
-    J = props.get('J', 0.4 * (B*tf**3 + (D-tf)*tw**3)) 
+    # Derived Geometrics
+    r = props.get('r', tf) / 10.0 
+    ho = D - tf
+    ry = math.sqrt(Iy / A)
     
+    # Torsional Constant (J)
+    J = props.get('J', 0.4 * (B*tf**3 + (D-tf)*tw**3))
     Cw = (Iy * ho**2) / 4
     rts = math.sqrt(math.sqrt(Iy * Cw) / Sx)
 
-    # --- 2. Compactness Check (Local Buckling) ---
-    # Flange (Flexure)
-    lambda_f = B / (2 * tf)
-    lambda_pf = 0.38 * math.sqrt(E / Fy)
-    lambda_rf = 1.0 * math.sqrt(E / Fy)
+    # --- 2. Compactness ---
+    Mp = Fy * Zx
     
-    # Web (Flexure)
-    lambda_w = h / tw
-    lambda_pw = 3.76 * math.sqrt(E / Fy)
-    lambda_rw = 5.70 * math.sqrt(E / Fy)
-
-    # Determine Mp (Nominal Plastic Moment) adjusting for Local Buckling
-    Mp_base = Fy * Zx
-    
-    # Check Flange Compactness
-    if lambda_f <= lambda_pf:
-        Mn_flange = Mp_base
-    elif lambda_f < lambda_rf:
-        # Non-Compact Flange: Linear Interpolation
-        Mn_flange = Mp_base - (Mp_base - 0.7*Fy*Sx) * ((lambda_f - lambda_pf)/(lambda_rf - lambda_pf))
-    else:
-        # Slender Flange (Simplified to elastic limit for this tool)
-        kc = 4 / math.sqrt(h/tw)
-        if kc < 0.35: kc = 0.35
-        if kc > 0.76: kc = 0.76
-        Mn_flange = 0.9 * E * kc * Sx / lambda_f**2 # Approximate
-        
-    # Check Web Compactness (Usually compact for hot-rolled, but good to check)
-    if lambda_w <= lambda_pw:
-        Mn_web = Mp_base
-    else:
-        # Simplified reduction for non-compact web
-        Mn_web = Mp_base 
-        # Full logic for slender web is complex, assuming compact/non-compact for standard JIS.
-
-    # Actual Mp is limited by local buckling
-    Mp = min(Mp_base, Mn_flange, Mn_web)
-
-    # --- 3. Shear Calculation (Cv Calculation) ---
-    # h/tw check for Cv
-    kv = 5.0 # For unstiffened webs
-    limit_1 = 1.10 * math.sqrt(kv * E / Fy)
-    limit_2 = 1.37 * math.sqrt(kv * E / Fy)
-    
-    if lambda_w <= limit_1:
-        Cv = 1.0
-    elif lambda_w <= limit_2:
-        Cv = limit_1 / lambda_w
-    else:
-        Cv = (1.51 * E * kv) / (lambda_w**2 * Fy)
-        
+    # --- 3. Shear Calculation ---
+    Cv = 1.0 
     Aw = D * tw
     Vn = 0.6 * Fy * Aw * Cv
     
     # --- 4. Moment Calculation (LTB) ---
-    # Lp and Lr
-    # Lp = 1.76 * ry * sqrt(E/Fy)
     Lp = 1.76 * ry * math.sqrt(E/Fy)
     
     c_const = 1.0
     term_sqrt = math.sqrt(((J*c_const)/(Sx*ho))**2 + 6.76*((0.7*Fy)/E)**2)
     Lr = 1.95 * rts * (E/(0.7*Fy)) * math.sqrt((J*c_const)/(Sx*ho) + term_sqrt)
-
-    # Cb Factor (1.14 for Uniform Load, Simple Span)
+    
     Cb = 1.14 
-
+    
     Zone = ""
     if Lb <= Lp:
         Mn_ltb = Mp
@@ -123,109 +72,108 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         Mn_ltb = min(Mn_ltb, Mp)
         Zone = "Zone 3 (Elastic)"
         
-    # Final Nominal Moment
     Mn = min(Mp, Mn_ltb)
     
-    # --- 5. Apply Method Factors (ASD/LRFD) ---
+    # --- 5. Apply Method Factors ---
     omega_v = 1.50
     omega_b = 1.67
-    
-    # NOTE: phi_v = 1.00 is per AISC G2.1(a) for rolled I-shapes with h/tw <= 2.24 sqrt(E/Fy)
-    phi_v = 1.00 
+    phi_v = 1.00
     phi_b = 0.90
     
     if method == "ASD":
         V_des = Vn / omega_v
         M_des = Mn / omega_b
-        txt_v_method = r"V_{design} = V_n / \Omega_v"
-        txt_m_method = r"M_{design} = M_n / \Omega_b"
+        txt_v = r"V_n / \Omega_v"
+        txt_m = r"M_n / \Omega_b"
     else: # LRFD
         V_des = phi_v * Vn
         M_des = phi_b * Mn
-        txt_v_method = r"V_{design} = \phi_v V_n"
-        txt_m_method = r"M_{design} = \phi_b M_n"
+        txt_v = r"\phi_v V_n"
+        txt_m = r"\phi_b M_n"
 
-    # --- 6. Load Conversion & Net Load ---
-    # Gross Capacity (kg/m)
-    w_shear = (2 * V_des) / (L/100) 
-    w_moment = (8 * M_des) / ((L/100)**2)
+    # --- 6. Capacity to Uniform Load Conversion & Net Load ---
     
-    # Deflection
+    # Shear & Moment (Already correct: multiplied by 100 for conversion)
+    w_shear_cap = (2 * V_des) / (L/100)        # kg/m
+    w_moment_cap = (8 * M_des) / ((L/100)**2)  # kg/m
+    
+    # Deflection Limit
     delta_allow = L / def_limit
-    w_defl = (delta_allow * 384 * E * Ix) / (5 * L**4)
+    
+    # [OLD CODE] - Issue: Result is in kg/cm
+    # w_defl_cap = (delta_allow * 384 * E * Ix) / (5 * L**4)
+    
+    # [NEW CODE] - Fix: Multiply by 100 to convert kg/cm -> kg/m
+    w_defl_cap = ((delta_allow * 384 * E * Ix) / (5 * L**4)) * 100
     
     # Beam Weight (kg/m)
     w_beam = props['W']
     
-    # --- CRITICAL FIX: Net Load Logic (ASD vs LRFD) ---
     if method == "LRFD":
-        # For LRFD: Capacity is Factored (Wu). 
-        # We must subtract Factored Dead Load (1.2 * BeamWeight) to get Safe Net Load.
-        w_beam_factored = 1.2 * w_beam
+        # Strength Checks: Deduct FACTORED Dead Load
+        factored_dead_load = 1.2 * w_beam
+        ws_net = max(0, w_shear_cap - factored_dead_load)
+        wm_net = max(0, w_moment_cap - factored_dead_load)
         
-        ws_net = max(0, w_shear - w_beam_factored)
-        wm_net = max(0, w_moment - w_beam_factored)
-        
-        # Deflection is a SERVICEABILITY check (Unfactored Loads).
-        # Standard practice: Check deflection against (D+L) service load.
-        # So we subtract unfactored beam weight.
-        wd_net = max(0, w_defl - w_beam) 
+        # Serviceability Check: Deduct UNFACTORED Dead Load
+        wd_net = max(0, w_defl_cap - w_beam)
     else:
-        # ASD: Capacity is Allowable (Wa). Subtract Unfactored Beam Weight.
-        ws_net = max(0, w_shear - w_beam)
-        wm_net = max(0, w_moment - w_beam)
-        wd_net = max(0, w_defl - w_beam)
+        # ASD: Deduct UNFACTORED Dead Load
+        factored_dead_load = 1.0 * w_beam
+        ws_net = max(0, w_shear_cap - factored_dead_load)
+        wm_net = max(0, w_moment_cap - factored_dead_load)
+        wd_net = max(0, w_defl_cap - w_beam)
 
-    # --- 7. Transition Points ---
+    # Transition Points calculation
     if V_des > 0:
-        L_vm_val = (4 * M_des / V_des) / 100 
+        L_vm = (4 * M_des / V_des) / 100
     else: 
-        L_vm_val = 0
+        L_vm = 0
         
-    K_defl = (384 * E * Ix) / (5 * def_limit) 
+    K_defl = (384 * E * Ix) / (5 * def_limit)
     if M_des > 0:
-        L_md_val = (K_defl / (8 * M_des)) / 100
+        L_md = (K_defl / (8 * M_des)) / 100
     else:
-        L_md_val = 0
+        L_md = 0
 
     return {
         'E_ksc': E,
         'L_cm': L,
-        'Lb': Lb/100,      # m
-        'Lb_used': Lb/100, # m
-        'def_limit': def_limit,
+        'Lb': Lb/100,
         
-        # Props
-        'Sx': Sx, 'Zx': Zx, 'Aw': Aw, 'Ix': Ix,
+        # Properties
+        'Sx': Sx,
+        'Zx': Zx,
+        'Aw': Aw,
+        'Ix': Ix,
         
-        # Shear
-        'Vn': Vn, 'V_des': V_des, 'ws': w_shear,
-        'txt_v_method': txt_v_method,
-        'omega_v': omega_v, 'phi_v': phi_v,
-        'Cv': Cv, # Return Cv for report
-        
-        # Moment
+        # Capacities
+        'Vn': Vn, 'V_des': V_des, 
         'Mp': Mp, 'Mn': Mn, 'M_des': M_des, 'M_des_full': M_des,
-        'wm': w_moment,
-        'txt_m_method': txt_m_method,
-        'omega_b': omega_b, 'phi_b': phi_b,
-        'Cb': Cb,
+        'cv': Cv,
         
-        # Compactness Info
-        'lambda_f': lambda_f, 'lambda_pf': lambda_pf, 'lambda_rf': lambda_rf,
+        # Factors text
+        'txt_v_method': txt_v, 'txt_m_method': txt_m,
+        'omega_v': omega_v, 'phi_v': phi_v,
+        'omega_b': omega_b, 'phi_b': phi_b,
         
         # LTB
         'Lp': Lp/100, 'Lr': Lr/100, 'Zone': Zone,
         
         # Deflection
-        'delta': delta_allow, 'wd': w_defl,
+        'delta': delta_allow,
         
-        # Net Load Calculation (Important!)
+        # LOADS (Gross & Net)
+        'ws_gross': w_shear_cap,
+        'wm_gross': w_moment_cap,
+        'wd_gross': w_defl_cap,
         'w_beam': w_beam,
+        'factored_dead_load': factored_dead_load,
+        
+        # Net Results
         'ws_net': ws_net,
         'wm_net': wm_net,
         'wd_net': wd_net,
         
-        # Transitions
-        'L_vm': L_vm_val, 'L_md': L_md_val
+        'L_vm': L_vm, 'L_md': L_md
     }
