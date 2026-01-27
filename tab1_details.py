@@ -8,7 +8,7 @@ def render_tab1(c, props, method, Fy, section):
     
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
     
-    # === [NEW] DATA SOURCE TRACING ===
+    # === DATA SOURCE TRACING ===
     with st.expander("ℹ️ Data Sources & Input Parameters", expanded=False):
         ds_c1, ds_c2 = st.columns(2)
         with ds_c1:
@@ -40,7 +40,6 @@ def render_tab1(c, props, method, Fy, section):
     
     c1b, c2b, c3b, c4b = st.columns(4)
     c1b.metric("Inertia (Ix)", f"{props['Ix']:,} cm4", help="Moment of Inertia around the X-axis")
-    # Using .get() for safety in case key is missing
     c2b.metric("Plastic Mod (Zx)", f"{props.get('Zx', 0):,} cm3", help="Plastic Section Modulus")
     c3b.metric("Elastic Mod (Sx)", f"{c['Sx']:.1f} cm3", delta="Calculated", delta_color="off", help="Elastic Section Modulus (Ix / c)")
     c4b.metric("Unbraced Length", f"{c['Lb']:.2f} m", help="Distance between lateral braces (Assumed equal to Span)")
@@ -136,7 +135,6 @@ def render_tab1(c, props, method, Fy, section):
     
     with col_d2:
         st.write("**Deflection Capacity**")
-        # Removed 'help' parameter from st.progress for compatibility
         st.progress(1.0)
         st.caption(f"Max Limit: {c['delta']:.2f} cm (Target)")
 
@@ -180,25 +178,27 @@ def render_tab1(c, props, method, Fy, section):
     
     with st.expander("🔍 Show Formula Derivation (Aligned)"):
         st.markdown("#### 6.1 Shear $\leftrightarrow$ Moment Transition ($L_{v-m}$)")
+        # FIX: Added double braces {{ }} to escape LaTeX environment
         st.latex(rf"""
-        \begin{aligned}
+        \begin{{aligned}}
         w_s &= w_m \\
         \frac{{2 \cdot V_{{des}}}}{{L}} &= \frac{{8 \cdot M_{{des}}}}{{L^2}} \\
         L_{{v-m}} &= \frac{{4 \cdot M_{{des}}}}{{V_{{des}}}} \\
         L_{{v-m}} &= \frac{{4 \cdot {c['M_des_full']:,.0f}}}{{{c['V_des']:,.0f}}} = \mathbf{{{c['L_vm']:.2f}}} \text{{ m}}
-        \end{aligned}
+        \end{{aligned}}
         """)
 
         st.divider()
 
         st.markdown("#### 6.2 Moment $\leftrightarrow$ Deflection Transition ($L_{m-d}$)")
+        # FIX: Added double braces {{ }} to escape LaTeX environment
         st.latex(rf"""
-        \begin{aligned}
+        \begin{{aligned}}
         w_m &= w_d \\
         \frac{{8 \cdot M_{{des}}}}{{L^2}} &= \frac{{384 \cdot E \cdot I \cdot (L/{limit_val})}}{{5 \cdot L^4}} \\
         L^2 &= \frac{{384 \cdot E \cdot I}}{{40 \cdot M_{{des}} \cdot {limit_val}}} \\
         L_{{m-d}} &= \sqrt{{\frac{{384 \cdot {c['E_ksc']:,.0f} \cdot {props['Ix']:,} \cdot 100}}{{40 \cdot {c['M_des_full']:,.0f} \cdot {limit_val}}}}} = \mathbf{{{c['L_md']:.2f}}} \text{{ m}}
-        \end{aligned}
+        \end{{aligned}}
         """)
 
     col_sum1, col_sum2 = st.columns(2)
