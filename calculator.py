@@ -93,17 +93,14 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
 
     # --- 6. Capacity to Uniform Load Conversion & Net Load ---
     
-    # Shear & Moment (Already correct: multiplied by 100 for conversion)
+    # Shear & Moment
     w_shear_cap = (2 * V_des) / (L/100)        # kg/m
     w_moment_cap = (8 * M_des) / ((L/100)**2)  # kg/m
     
     # Deflection Limit
     delta_allow = L / def_limit
     
-    # [OLD CODE] - Issue: Result is in kg/cm
-    # w_defl_cap = (delta_allow * 384 * E * Ix) / (5 * L**4)
-    
-    # [NEW CODE] - Fix: Multiply by 100 to convert kg/cm -> kg/m
+    # [FIXED] - Multiply by 100 to convert kg/cm -> kg/m
     w_defl_cap = ((delta_allow * 384 * E * Ix) / (5 * L**4)) * 100
     
     # Beam Weight (kg/m)
@@ -150,7 +147,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         # Capacities
         'Vn': Vn, 'V_des': V_des, 
         'Mp': Mp, 'Mn': Mn, 'M_des': M_des, 'M_des_full': M_des,
-        'cv': Cv,
+        'Cv': Cv, # <--- FIXED: Changed from 'cv' to 'Cv' to match tab1_details.py
         
         # Factors text
         'txt_v_method': txt_v, 'txt_m_method': txt_m,
