@@ -33,43 +33,46 @@ def render_tab1(c, props, method, Fy, section):
     st.caption(f"📍 Values retrieved from standard section table for **{section}**")
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Depth (D)", f"{props['D']} mm", delta="Database", delta_color="off")
-    c2.metric("Width (B)", f"{props.get('B', 100)} mm", delta="Database", delta_color="off")
-    c3.metric("Flange (tf)", f"{props.get('tf', 10)} mm", delta="Database", delta_color="off")
-    c4.metric("Web (tw)", f"{props['tw']} mm", delta="Database", delta_color="off")
+    c1.metric("Depth (D)", f"{props['D']} mm", delta="Database", delta_color="off", help="Total depth of the beam section")
+    c2.metric("Width (B)", f"{props.get('B', 100)} mm", delta="Database", delta_color="off", help="Width of the flange")
+    c3.metric("Flange (tf)", f"{props.get('tf', 10)} mm", delta="Database", delta_color="off", help="Thickness of the flange")
+    c4.metric("Web (tw)", f"{props['tw']} mm", delta="Database", delta_color="off", help="Thickness of the web")
     
     c1b, c2b, c3b, c4b = st.columns(4)
-    c1b.metric("Inertia (Ix)", f"{props['Ix']:,} cm4")
-    c2b.metric("Plastic Mod (Zx)", f"{props['Zx']:,} cm3")
-    c3b.metric("Elastic Mod (Sx)", f"{c['Sx']:.1f} cm3", delta="Calculated", delta_color="off")
-    c4b.metric("Unbraced Length", f"{c['Lb']:.2f} m", help="Assumed equal to Span Length")
+    c1b.metric("Inertia (Ix)", f"{props['Ix']:,} cm4", help="Moment of Inertia around the X-axis")
+    c2b.metric("Plastic Mod (Zx)", f"{props['Zx']:,} cm3", help="Plastic Section Modulus")
+    c3b.metric("Elastic Mod (Sx)", f"{c['Sx']:.1f} cm3", delta="Calculated", delta_color="off", help="Elastic Section Modulus (Ix / c)")
+    c4b.metric("Unbraced Length", f"{c['Lb']:.2f} m", help="Distance between lateral braces (Assumed equal to Span)")
     
     st.markdown("---")
 
     # === 2. SHEAR ===
-    st.subheader("2. Shear Capacity Control")
-    col_s1, col_s2 = st.columns([1, 1])
-    
-    with col_s1:
-        st.markdown("**Step 2.1: Nominal Shear Strength ($V_n$)**")
-        st.latex(r"V_n = 0.60 \times F_y \times A_w")
-        st.write(f"- $F_y$ (Input) = {Fy} ksc")
-        st.write(f"- $A_w$ (Calc) = {c['Aw']:.2f} cm²")
-        st.latex(rf"\therefore V_n = 0.60 \times {Fy} \times {c['Aw']:.2f} = \mathbf{{{c['Vn']:,.0f}}} \text{{ kg}}")
+    with st.container(border=True):
+        st.subheader("2. Shear Capacity Control")
+        col_s1, col_s2 = st.columns([1, 1])
         
-    with col_s2:
-        st.markdown("**Step 2.2: Design Shear Strength ($V_{design}$)**")
-        st.latex(c['txt_v_method'])
-        if method == "ASD":
-             st.write(f"Using Safety Factor $\Omega_v = {c['omega_v']:.2f}$ (AISC ASD)")
-             st.latex(rf"V_{{design}} = \frac{{{c['Vn']:,.0f}}}{{{c['omega_v']:.2f}}}")
-        else:
-             st.write(f"Using Resistance Factor $\phi_v = {c['phi_v']:.2f}$ (AISC LRFD)")
-             st.latex(rf"V_{{design}} = {c['phi_v']:.2f} \times {c['Vn']:,.0f}")
-        st.latex(rf"\therefore V_{{design}} = \mathbf{{{c['V_des']:,.0f}}} \text{{ kg}}")
-    
-    st.markdown("**Step 2.3: Safe Uniform Load ($w_s$)**")
-    st.latex(rf"w_s = \frac{{2 \times {c['V_des']:,.0f}}}{{{c['L_cm']:.0f}}} \times 100 = \mathbf{{{c['ws']:,.0f}}} \text{{ kg/m}}")
+        with col_s1:
+            st.markdown("**Step 2.1: Nominal Shear Strength ($V_n$)**")
+            st.latex(r"V_n = 0.60 \times F_y \times A_w")
+            st.write(f"- $F_y$ (Input) = {Fy} ksc")
+            st.write(f"- $A_w$ (Calc) = {c['Aw']:.2f} cm²")
+            st.latex(rf"\therefore V_n = 0.60 \times {Fy} \times {c['Aw']:.2f} = \mathbf{{{c['Vn']:,.0f}}} \text{{ kg}}")
+            
+        with col_s2:
+            st.markdown("**Step 2.2: Design Shear Strength ($V_{design}$)**")
+            st.latex(c['txt_v_method'])
+            if method == "ASD":
+                 st.write(f"Using Safety Factor $\Omega_v = {c['omega_v']:.2f}$ (AISC ASD)")
+                 st.latex(rf"V_{{design}} = \frac{{{c['Vn']:,.0f}}}{{{c['omega_v']:.2f}}}")
+            else:
+                 st.write(f"Using Resistance Factor $\phi_v = {c['phi_v']:.2f}$ (AISC LRFD)")
+                 st.latex(rf"V_{{design}} = {c['phi_v']:.2f} \times {c['Vn']:,.0f}")
+            st.latex(rf"\therefore V_{{design}} = \mathbf{{{c['V_des']:,.0f}}} \text{{ kg}}")
+        
+        st.divider()
+        st.markdown("**Step 2.3: Safe Uniform Load ($w_s$)**")
+        st.latex(rf"w_s = \frac{{2 \times {c['V_des']:,.0f}}}{{{c['L_cm']:.0f}}} \times 100 = \mathbf{{{c['ws']:,.0f}}} \text{{ kg/m}}")
+
     st.markdown("---")
 
     # === 3. MOMENT (WITH LTB) ===
