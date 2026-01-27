@@ -4,12 +4,12 @@ import plotly.graph_objects as go
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
-# Import Modules
+# Import Tabs
 from tab1_details import render_tab1
 from tab3_capacity import render_tab3
 from tab4_summary import render_tab4
-from tab5_saved import render_tab5   # Timeline Analysis
-from tab6_design import render_tab6  # [NEW] Design Check
+from tab5_saved import render_tab5
+from tab6_design import render_tab6
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -20,7 +20,7 @@ with st.sidebar:
     st.header("1. Design Criteria")
     method = st.radio("Method", ["ASD", "LRFD"])
     
-    # [แก้ไขข้อ 3] Input Validation: ป้องกันค่า 0 เพื่อไม่ให้เกิด ZeroDivisionError
+    # [Fixed] Prevent ZeroDivisionError
     Fy = st.number_input("Fy (Yield Strength) [ksc]", min_value=100, value=2400, step=100)
     E_gpa = st.number_input("E (Modulus) [GPa]", min_value=1, value=200)
     
@@ -31,45 +31,48 @@ with st.sidebar:
                               index=0)
     def_val = int(def_option.split('/')[1].split()[0])
     
-    st.header("2. Single Section Analysis")
-    # [แก้ไขข้อ 4] Robust Sorting: เรียงลำดับหน้าตัดตาม Depth (D) และ Weight (W)
+    st.header("2. Analysis Parameters")
+    # [Fixed] Robust Sorting (Depth, Weight)
     sort_list = sorted(SYS_H_BEAMS.keys(), key=lambda x: (SYS_H_BEAMS[x]['D'], SYS_H_BEAMS[x]['W']))
     
-    # เลือกค่า Default เป็นตัวที่ 8 (หรือตัวแรกถ้าข้อมูลน้อยกว่านั้น)
     default_idx = 8 if len(sort_list) > 8 else 0
-    section = st.selectbox("Select Size to Analyze", sort_list, index=default_idx)
+    section = st.selectbox("Select Size", sort_list, index=default_idx)
     
     L_input = st.slider("Span Length (m)", 2.0, 30.0, 6.0, 0.5)
+    
+    # [NEW] Unbraced Length Input
+    use_custom_Lb = st.checkbox("Specify Unbraced Length (Lb)")
+    if use_custom_Lb:
+        Lb_input = st.number_input("Unbraced Length (Lb) [m]", min_value=0.1, max_value=30.0, value=L_input)
+    else:
+        Lb_input = None # Will default to L_input in calculator
 
 # --- Process ---
 props = SYS_H_BEAMS[section]
-c = core_calculation(L_input, Fy, E_gpa, props, method, def_val)
+# [NEW] Pass Lb_input to calculator
+c = core_calculation(L_input, Fy, E_gpa, props, method, def_val, Lb_m=Lb_input)
 final_w = min(c['ws'], c['wm'], c['wd'])
 
 # --- Display Tabs ---
 t1, t2, t3, t4, t5, t6 = st.tabs([
-    "📝 Detail Report", 
-    "📊 Behavior Graph", 
-    "📋 Capacity Table",
-    "📚 Master Catalog",
-    "📊 Timeline Analysis", 
-    "🛠️ Design Check"        
+    "📝 Detail Report", "📊 Behavior Graph", "📋 Capacity Table",
+    "📚 Master Catalog", "📊 Timeline Analysis", "🛠️ Connection Design"        
 ])
 
-with t1:
-    render_tab1(c, props, method, Fy, section)
+with t1: render_tab1(c, props, method, Fy, section)
 
 with t2:
-    # --- Graph Logic for Tab 2 ---
     st.subheader(f"📈 Capacity Envelope Analysis: {section}")
-    st.caption(f"Load Capacity Envelope (Deflection Limit: **L/{def_val}**)")
+    st.caption(f"Lb Used = {c['Lb_used']:.2f} m | Deflection Limit: L/{def_val}")
 
-    # เพิ่ม Safety Check ป้องกันการหารด้วยศูนย์ในกราฟ
-    L_max = max(15, c['L_md']*1.2, L_input*1.5)
+    L_max = max(15, L_input*1.5)
     x = np.linspace(0.5, L_max, 400)
     
-    # คำนวณเส้นกราฟ (ระวังการหารด้วย 0 ใน x แต่ linspace เริ่มที่ 0.5 ปลอดภัยแล้ว)
     ys = (2 * c['V_des'] / (x*100)) * 100 
+    # Note: Envelope assumes Lb = L for the curve generation normally, 
+    # but strictly speaking, changing L changes Lb if unbraced. 
+    # For this simple envelope, we assume Lb = L for the whole curve 
+    # unless logic is complex. Here we keep simple scaling.
     ym = (8 * c['M_des'] / (x*100)**2) * 100 
     
     k_def = (384 * c['E_ksc'] * props['Ix']) / (5 * def_val)
@@ -79,78 +82,20 @@ with t2:
     y_lim = max(y_gov) * 1.5 
     
     fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=x, y=y_gov,
-        fill='tozeroy',
-        fillcolor='rgba(100, 100, 100, 0.1)', 
-        line=dict(color='rgba(255,255,255,0)'),
-        hoverinfo='skip',
-        showlegend=False,
-        name='Safe Zone'
-    ))
-
-    line_styles = dict(width=2, dash='dash')
-    fig.add_trace(go.Scatter(x=x, y=ys, name='Shear Limit', 
-                             line=dict(color='#d9534f', **line_styles),
-                             hovertemplate="Shear Limit: %{y:,.0f} kg/m<extra></extra>"))
-    fig.add_trace(go.Scatter(x=x, y=ym, name='Moment Limit', 
-                             line=dict(color='#f0ad4e', **line_styles),
-                             hovertemplate="Moment Limit: %{y:,.0f} kg/m<extra></extra>"))
-    fig.add_trace(go.Scatter(x=x, y=yd, name=f'Deflection (L/{def_val})', 
-                             line=dict(color='#5cb85c', **line_styles),
-                             hovertemplate="Deflection Limit: %{y:,.0f} kg/m<extra></extra>"))
-
-    fig.add_trace(go.Scatter(
-        x=x, y=y_gov, 
-        name='Governing Capacity', 
-        line=dict(color='black', width=4),
-        hovertemplate="<b>Governing Capacity</b><br>Span: %{x:.2f} m<br>Load: %{y:,.0f} kg/m<extra></extra>"
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=[L_input], y=[final_w],
-        mode='markers+text',
-        marker=dict(size=14, color='#0275d8', symbol='diamond', line=dict(width=2, color='white')),
-        text=[f"Current: {final_w:,.0f}"],
-        textposition="top right",
-        name='Your Design'
-    ))
-
-    # Add Zone Annotations
-    fig.add_vrect(x0=0, x1=c['L_vm'], fillcolor="#d9534f", opacity=0.05, layer="below", line_width=0)
-    if c['L_vm'] > 0:
-        fig.add_annotation(x=c['L_vm']/2, y=y_lim*0.9, text="SHEAR", showarrow=False, font=dict(color="#d9534f", weight="bold"))
+    fig.add_trace(go.Scatter(x=x, y=y_gov, fill='tozeroy', fillcolor='rgba(100,100,100,0.1)', line=dict(color='rgba(0,0,0,0)'), showlegend=False))
+    fig.add_trace(go.Scatter(x=x, y=ys, name='Shear Limit', line=dict(color='#d9534f', dash='dash')))
+    fig.add_trace(go.Scatter(x=x, y=ym, name='Moment Limit', line=dict(color='#f0ad4e', dash='dash')))
+    fig.add_trace(go.Scatter(x=x, y=yd, name=f'Defl (L/{def_val})', line=dict(color='#5cb85c', dash='dash')))
+    fig.add_trace(go.Scatter(x=x, y=y_gov, name='Governing', line=dict(color='black', width=3)))
     
-    fig.add_vrect(x0=c['L_vm'], x1=c['L_md'], fillcolor="#f0ad4e", opacity=0.05, layer="below", line_width=0)
-    if c['L_md'] > c['L_vm']: # ตรวจสอบก่อนวาด Annotation
-        fig.add_annotation(x=(c['L_vm']+c['L_md'])/2, y=y_lim*0.9, text="MOMENT", showarrow=False, font=dict(color="#f0ad4e", weight="bold"))
+    fig.add_trace(go.Scatter(x=[L_input], y=[final_w], mode='markers+text', 
+                             marker=dict(size=12, color='blue', symbol='diamond'),
+                             text=[f"{final_w:,.0f}"], textposition="top right", name='Design Point'))
     
-    fig.add_vrect(x0=c['L_md'], x1=L_max, fillcolor="#5cb85c", opacity=0.05, layer="below", line_width=0)
-    fig.add_annotation(x=(c['L_md']+L_max)/2, y=y_lim*0.9, text="DEFLECTION", showarrow=False, font=dict(color="#5cb85c", weight="bold"))
-
-    fig.update_layout(
-        title=dict(text=f"Structural Capacity Envelope: {section}", font=dict(size=20)),
-        height=600,
-        hovermode="x unified",
-        xaxis_title="Span Length (m)",
-        yaxis_title="Load Capacity (kg/m)",
-        yaxis_range=[0, y_lim],
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        template="plotly_white"
-    )
+    fig.update_layout(title=f"Capacity Envelope: {section}", height=500, template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
 
-with t3:
-    render_tab3(props, method, Fy, E_gpa, section, def_val)
-
-with t4:
-    render_tab4(method, Fy, E_gpa, def_val)
-
-with t5:
-    render_tab5(method, Fy, E_gpa, def_val)
-
-# [NEW] Render Tab 6
-with t6:
-    # แก้ไขตรงนี้: ส่งตัวแปร section และ L_input เพิ่มเข้าไป เพื่อแก้ TypeError
-    render_tab6(method, Fy, E_gpa, def_val, section, L_input)
+with t3: render_tab3(props, method, Fy, E_gpa, section, def_val)
+with t4: render_tab4(method, Fy, E_gpa, def_val)
+with t5: render_tab5(method, Fy, E_gpa, def_val)
+with t6: render_tab6(method, Fy, E_gpa, def_val, section, L_input)
