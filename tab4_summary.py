@@ -1,4 +1,3 @@
-# ไฟล์: tab4_summary.py
 import streamlit as st
 import pandas as pd
 from database import SYS_H_BEAMS
@@ -25,8 +24,12 @@ def render_tab4(method, Fy, E_gpa, def_limit):
     # --- Loop Calculation ---
     data = []
     
-    # Sort sections by size
-    sorted_sections = sorted(SYS_H_BEAMS.keys(), key=lambda x: int(x.split('x')[0].split('-')[1]))
+    # [แก้ไข] Robust Sorting Logic: เรียงลำดับตามความลึก (D) และน้ำหนัก (W) จาก Database โดยตรง
+    # วิธีนี้จะมีความเสถียรสูงสุด ไม่ว่าชื่อหน้าตัดจะเปลี่ยนรูปแบบไปอย่างไร
+    sorted_sections = sorted(
+        SYS_H_BEAMS.keys(), 
+        key=lambda x: (SYS_H_BEAMS[x]['D'], SYS_H_BEAMS[x]['W'])
+    )
     
     for section_name in sorted_sections:
         props = SYS_H_BEAMS[section_name]
@@ -42,9 +45,12 @@ def render_tab4(method, Fy, E_gpa, def_limit):
         # หาค่า Control
         cap_val = min(c_active['ws'], c_active['wm'], c_active['wd'])
         
-        if cap_val == c_active['ws']: mode = "Shear"
-        elif cap_val == c_active['wm']: mode = "Moment"
-        else: mode = "Deflection"
+        if cap_val == c_active['ws']: 
+            mode = "Shear"
+        elif cap_val == c_active['wm']: 
+            mode = "Moment"
+        else: 
+            mode = "Deflection"
         
         net_load = max(0, cap_val - props['W'])
 
@@ -69,9 +75,12 @@ def render_tab4(method, Fy, E_gpa, def_limit):
     # --- Styling ---
     def highlight_mode(val):
         color = ''
-        if val == 'Shear': color = 'color: #d9534f; font-weight: bold'
-        elif val == 'Moment': color = 'color: #f0ad4e; font-weight: bold'
-        elif val == 'Deflection': color = 'color: #5cb85c; font-weight: bold'
+        if val == 'Shear': 
+            color = 'color: #d9534f; font-weight: bold'
+        elif val == 'Moment': 
+            color = 'color: #f0ad4e; font-weight: bold'
+        elif val == 'Deflection': 
+            color = 'color: #5cb85c; font-weight: bold'
         return color
 
     st.dataframe(
@@ -90,7 +99,7 @@ def render_tab4(method, Fy, E_gpa, def_limit):
                 f"Cap (kg/m)",
                 format="%d",
                 min_value=0,
-                max_value=int(df[f"Cap @ {compare_L}m"].max()),
+                max_value=int(df[f"Cap @ {compare_L}m"].max()) if not df.empty else 1000,
             ),
             f"Net @ {compare_L}m": st.column_config.NumberColumn(
                 "Net Load", format="%d"
