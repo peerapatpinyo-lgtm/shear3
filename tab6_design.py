@@ -7,7 +7,7 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
     st.markdown(f"### 🏗️ Connection Design: Shear Tab ({method})")
     
     # 1. Setup Beam Data
-    # ตรวจสอบว่ามี section_name ใน database หรือไม่ ถ้าไม่มีให้ใช้ตัวแรก
+    # ตรวจสอบว่ามี section_name ใน database หรือไม่ ถ้าไม่มีให้ใช้ตัวแรกของ Dictionary
     if section_name not in SYS_H_BEAMS: 
         section_name = list(SYS_H_BEAMS.keys())[0]
     
@@ -31,7 +31,7 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
 
     if run:
         # เตรียม Dictionary สำหรับส่งเข้า Calculator
-        # แก้ไขจาก beam['t1'] เป็น beam['tw'] ให้ตรงกับ database.py
+        # ใช้ beam['tw'] ให้ตรงกับ database.py และกำหนดระยะมาตรฐาน
         inputs = {
             'method': method, 
             'load': Vu, 
@@ -49,7 +49,7 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             'leh_beam': 35
         }
         
-        # 2. ทำการคำนวณผ่าน Engine
+        # 2. ทำการคำนวณผ่าน Engine ในไฟล์ calculator_tab.py
         res = calc.calculate_shear_tab(inputs)
         
         if res.get('critical_error'):
@@ -98,31 +98,33 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
             # --- 4. แสดงผลการคำนวณแยกตามหัวข้อ ---
             st.markdown("#### 📊 Design Verification")
             
-            # วนลูปแสดงผลจากผลลัพธ์ที่ได้
+            # วนลูปแสดงผลจากผลลัพธ์ที่ได้ (Bolt Shear, Bearing, Yielding, Rupture)
             for key in ['bolt_shear', 'bearing', 'shear_yield', 'shear_rup']:
                 item = res[key]
                 ratio = item['ratio']
                 
-                # เลือกสีตาม Ratio
-                color = "green" if ratio < 0.9 else "orange" if ratio < 1.0 else "red"
-                
+                # แสดง Expander พร้อมสรุป Ratio (ปัดเศษ 2 ตำแหน่งตามข้อ 5)
                 with st.expander(f"{item['title']} (Ratio: {ratio:.2f})"):
                     c1, c2 = st.columns(2)
                     with c1:
                         st.markdown("**Formula & Substitution**")
                         st.latex(item['formula'])
+                        # ปัดเศษเลขแทนค่าในสูตรให้สวยงาม
                         st.latex(rf" = {item['subst']}")
-                        st.latex(rf" \therefore R_n = {item['rn']:,.0f} \text{{ kg}}")
+                        # แสดง Nominal Strength (Rn) พร้อมคอมมาแยกหลัก
+                        st.latex(rf" \therefore R_n = {item['rn']:,.2f} \text{{ kg}}")
                     with c2:
                         st.markdown(f"**Design Capacity ({method})**")
+                        # แสดงสูตรตามวิธีออกแบบที่เลือก
                         if method == "ASD":
-                            st.latex(rf"R_a = \frac{{R_n}}{{\Omega}} = \frac{{{item['rn']:,.0f}}}{{{item['sf']}}}")
+                            st.latex(rf"R_a = \frac{{R_n}}{{\Omega}} = \frac{{{item['rn']:,.2f}}}{{{item['sf']}}}")
                         else:
-                            st.latex(rf"\phi R_n = {item['sf']} \times {item['rn']:,.0f}")
+                            st.latex(rf"\phi R_n = {item['sf']} \times {item['rn']:,.2f}")
                         
+                        # แสดงผล Metric ของกำลังที่ออกแบบเทียบกับ Load
                         st.metric(
                             label="Capacity", 
-                            value=f"{item['design_val']:,.0f} kg", 
+                            value=f"{item['design_val']:,.1f} kg", 
                             delta=f"Ratio: {ratio:.2f}",
                             delta_color="inverse" if ratio > 1.0 else "normal"
                         )
@@ -132,9 +134,8 @@ def render_tab6(method, Fy, E_gpa, def_limit, section_name, span_m):
                         else:
                             st.success("PASS")
     else:
-        # กรณีที่ยังไม่ได้กด Analyze
+        # กรณีที่ผู้ใช้ยังไม่กดปุ่ม Analyze
         with col_out:
             st.info("💡 ปรับแต่งพารามิเตอร์ทางซ้ายมือแล้วกดปุ่ม **Analyze** เพื่อดูโมเดล 3 มิติ และผลการคำนวณ")
-            # โชว์ภาพ Placeholder หรือคำแนะนำเบื้องต้น
             st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Shear_tab_connection.png/300px-Shear_tab_connection.png", 
-                     caption="Typical Shear Tab Connection", width=300)
+                     caption="Typical Single Plate Shear Connection", width=300)
