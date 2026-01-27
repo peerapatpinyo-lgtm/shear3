@@ -3,12 +3,11 @@ import math
 def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=None):
     """
     Main Beam Calculation Engine
-    Lb_m: Unbraced Length (m). If None, defaults to L_m (Span)
+    Returns a dictionary with ALL keys required by tab1_details.py
     """
-    # 1. Unit Conversion
+    # --- 1. Setup & Unit Conversion ---
     L = L_m * 100       # m -> cm (Total Span)
     
-    # Handle Unbraced Length (Lb)
     if Lb_m is None:
         Lb = L          # Default: Unbraced length = Span
     else:
@@ -16,94 +15,97 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         
     E = E_gpa * 10000   # GPa -> ksc
     
-    # --- [Step 1] Robust Property Extraction ---
+    # --- 2. Property Extraction (Robust) ---
     D = props['D']
     Ix = props['Ix']
+    tw = props['tw']
+    tf = props['tf']
+    bf = props['B']
     
-    # Sx (Elastic Modulus)
+    # Sx & Zx Logic
     if 'Sx' in props:
         Sx = props['Sx']
     else:
         Sx = Ix / (D / 2)
         
-    # Zx (Plastic Modulus)
     if 'Zx' in props:
         Zx = props['Zx']
     else:
         Zx = 1.12 * Sx
 
-    # Geometry & Others
-    ry = props.get('ry', props.get('B', 10)/4) 
-    t1 = props['tw']
-    t2 = props['tf']
-    bf = props['B']
+    # Derived Geom
+    ry = props.get('ry', bf/4) 
     r = props.get('r', 0) 
-    h = D - 2*t2 - 2*r    
-    J = props.get('J', 0.4 * (bf*t2**3 + (D-t2)*t1**3)) 
+    h = D - 2*tf - 2*r    
+    J = props.get('J', 0.4 * (bf*tf**3 + (D-tf)*tw**3)) 
     
-    # --- [Step 2] Shear Capacity (Vn) ---
-    Aw = D * t1    # <--- [FIX] Calculated here, needed in return
-    Cv = 1.0       # <--- [FIX]
+    # --- 3. Shear Calculation ---
+    Aw = D * tw  # <--- [Required by Tab 1]
+    Cv = 1.0
     Vn = 0.6 * Fy * Aw * Cv
     
-    # --- [Step 3] Moment Capacity (Mn) ---
+    # --- 4. Moment Calculation ---
     Mp = Fy * Zx
     Lp = 1.76 * ry * math.sqrt(E/Fy)
     
     # LTB Parameters
-    Iy = props.get('Iy', (2*t2*bf**3)/12 + ((D-2*t2)*t1**3)/12)
-    Cw = (Iy * (D - t2)**2) / 4
+    Iy = props.get('Iy', (2*tf*bf**3)/12 + ((D-2*tf)*tw**3)/12)
+    Cw = (Iy * (D - tf)**2) / 4
     rts = math.sqrt(math.sqrt(Iy * Cw) / Sx)
-    
-    ho = D - t2
+    ho = D - tf
     c_const = 1.0
     
-    # Lr Calculation
     term_sqrt = math.sqrt(((J*c_const)/(Sx*ho))**2 + 6.76*((0.7*Fy)/E)**2)
     Lr = 1.95 * rts * (E/(0.7*Fy)) * math.sqrt((J*c_const)/(Sx*ho) + term_sqrt)
 
-    Mn_ltb = Mp
-    Cb = 1.0 # Default Cb
-    
+    # Determine Zone & Mn
+    Zone = ""
     if Lb <= Lp:
-        # Zone 1: Plastic
         Mn_ltb = Mp
+        Zone = "Zone 1 (Plastic)"
     elif Lb > Lp and Lb <= Lr:
-        # Zone 2: Inelastic LTB
+        Cb = 1.0 
         Mn_ltb = Cb * (Mp - (Mp - 0.7*Fy*Sx) * ((Lb - Lp)/(Lr - Lp)))
         Mn_ltb = min(Mn_ltb, Mp)
+        Zone = "Zone 2 (Inelastic)"
     else:
-        # Zone 3: Elastic LTB
+        Cb = 1.0
         Fcr = (Cb * math.pi**2 * E) / ((Lb/rts)**2) * math.sqrt(1 + 0.078 * (J*c_const)/(Sx*ho) * (Lb/rts)**2)
         Mn_ltb = Fcr * Sx
         Mn_ltb = min(Mn_ltb, Mp)
+        Zone = "Zone 3 (Elastic)"
         
     Mn = min(Mp, Mn_ltb)
     
-    # --- [Step 4] Apply Safety Factors ---
+    # --- 5. Apply Method Factors (ASD/LRFD) ---
+    # เตรียมตัวแปรให้ครบ เพื่อไม่ให้ Tab 1 Error
+    omega_v = 1.50
+    omega_b = 1.67
+    phi_v = 1.00
+    phi_b = 0.90
+    
     if method == "ASD":
-        Omega_v = 1.50 
-        Omega_b = 1.67
-        V_des = Vn / Omega_v
-        M_des = Mn / Omega_b
-        SF_v_txt = "1.50"
-        SF_b_txt = "1.67"
+        V_des = Vn / omega_v
+        M_des = Mn / omega_b
+        # Text for report
+        txt_v_method = r"V_{design} = \frac{V_n}{\Omega_v}"
+        txt_m_method = r"M_{design} = \frac{M_n}{\Omega_b}"
     else: # LRFD
-        Phi_v = 1.00 
-        Phi_b = 0.90
-        V_des = Phi_v * Vn
-        M_des = Phi_b * Mn
-        SF_v_txt = "1.00"
-        SF_b_txt = "0.90"
+        V_des = phi_v * Vn
+        M_des = phi_b * Mn
+        # Text for report
+        txt_v_method = r"V_{design} = \phi_v V_n"
+        txt_m_method = r"M_{design} = \phi_b M_n"
 
-    # --- [Step 5] Convert to Distributed Load (w) ---
+    # --- 6. Uniform Load Conversion ---
     w_shear = (2 * V_des) / (L/100) 
     w_moment = (8 * M_des) / ((L/100)**2)
     
+    # Deflection
     delta_allow = L / def_limit
     w_defl = (delta_allow * 384 * E * Ix) / (5 * L**4)
     
-    # --- [Step 6] Transition Points ---
+    # --- 7. Transition Points ---
     if V_des > 0:
         L_vm_val = (4 * M_des / V_des) / 100 
     else: 
@@ -114,43 +116,49 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         L_md_val = (K_defl / (8 * M_des)) / 100
     else:
         L_md_val = 0
-    
-    # --- [CRITICAL FIX] Return EVERYTHING used by Tab 1 & Tab 6 ---
+
+    # --- RETURN DICTIONARY (MUST MATCH TAB 1 REQUIREMENTS) ---
     return {
-        # Design Values
-        'ws': w_shear,
-        'wm': w_moment,
-        'wd': w_defl,
-        'V_des': V_des,
-        'M_des': M_des,
-        'Vn': Vn,        # Needed for detailed checks
-        'Mn': Mn,        # Needed for detailed checks
-        'Mp': Mp,        # Plastic Moment
-        
-        # Graph Limits
-        'L_vm': L_vm_val, 
-        'L_md': L_md_val, 
-        
-        # Inputs & Config
+        # Input/Config
         'E_ksc': E,
-        'L_cm': L,             # Required by Tab 1
-        'Lb': Lb / 100,        # Required by Tab 1 (meters)
-        'Lb_used': Lb / 100,   # Required by App caption
+        'L_cm': L,
+        'Lb': Lb/100,          # m
+        'Lb_used': Lb/100,     # m
+        'def_limit': def_limit,
         
-        # Section Properties (Calculated & Raw)
-        'Ix': Ix,
+        # Section Props
         'Sx': Sx,
         'Zx': Zx,
-        'Aw': Aw,        # <--- [FIXED] Required by Tab 1 (Line 57)
-        'Cv': Cv,        # Required by Tab 1
-        'J': J,
+        'Aw': Aw,              # <--- Fixed KeyError
         
-        # LTB Parameters
-        'Lp': Lp,        # Required by Tab 1 behavior check
-        'Lr': Lr,        # Required by Tab 1 behavior check
-        'Cb': Cb,        # Required by Tab 1
+        # Shear
+        'Vn': Vn,
+        'V_des': V_des,
+        'ws': w_shear,
+        'txt_v_method': txt_v_method, # <--- Fixed KeyError
+        'omega_v': omega_v,           # <--- Fixed KeyError (passed even if LRFD)
+        'phi_v': phi_v,               # <--- Fixed KeyError (passed even if ASD)
         
-        # Safety Factors text (optional helper)
-        'SF_v_txt': SF_v_txt,
-        'SF_b_txt': SF_b_txt
+        # Moment
+        'Mp': Mp,
+        'Mn': Mn,
+        'M_des': M_des,
+        'M_des_full': M_des,   # <--- Fixed KeyError (Used in Derivation)
+        'wm': w_moment,
+        'txt_m_method': txt_m_method, # <--- Fixed KeyError
+        'omega_b': omega_b,
+        'phi_b': phi_b,
+        
+        # LTB info
+        'Lp': Lp/100,          # m
+        'Lr': Lr/100,          # m
+        'Zone': Zone,          # <--- Fixed KeyError
+        
+        # Deflection
+        'delta': delta_allow,  # <--- Fixed KeyError
+        'wd': w_defl,
+        
+        # Transitions
+        'L_vm': L_vm_val,
+        'L_md': L_md_val
     }
