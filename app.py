@@ -6,9 +6,10 @@ from database import SYS_H_BEAMS
 from calculator import core_calculation
 
 # --- ✅ FIX: Imports matching your sent files ---
-from tab1_setup import render_tab1       # เดิม tab1_details
-from tab3_member import render_tab3      # เดิม tab3_capacity
-from tab4_optimized import render_tab4   # เดิม tab4_summary
+# (กรณีคุณเปลี่ยนชื่อไฟล์ในโฟลเดอร์ให้เป็น _details, _capacity แล้ว)
+from tab1_details import render_tab1       
+from tab3_capacity import render_tab3      
+from tab4_summary import render_tab4
 from tab5_saved import render_tab5
 from tab6_design import render_tab6
 
