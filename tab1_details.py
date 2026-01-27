@@ -32,16 +32,18 @@ def render_tab1(c, props, method, Fy, section):
     st.markdown("#### 1. Geometric Properties")
     st.caption(f"📍 Values retrieved from standard section table for **{section}**")
     
+    # Row 1: Dimensions
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Depth (D)", f"{props['D']} mm", delta="Database", delta_color="off", help="Total depth of the beam section")
     c2.metric("Width (B)", f"{props.get('B', 100)} mm", delta="Database", delta_color="off", help="Width of the flange")
     c3.metric("Flange (tf)", f"{props.get('tf', 10)} mm", delta="Database", delta_color="off", help="Thickness of the flange")
     c4.metric("Web (tw)", f"{props['tw']} mm", delta="Database", delta_color="off", help="Thickness of the web")
     
+    # Row 2: Structural Properties & Weight
     c1b, c2b, c3b, c4b = st.columns(4)
     c1b.metric("Inertia (Ix)", f"{props['Ix']:,} cm4", help="Moment of Inertia around the X-axis")
     c2b.metric("Plastic Mod (Zx)", f"{props.get('Zx', 0):,} cm3", help="Plastic Section Modulus")
-    c3b.metric("Elastic Mod (Sx)", f"{c['Sx']:.1f} cm3", delta="Calculated", delta_color="off", help="Elastic Section Modulus (Ix / c)")
+    c3b.metric("Self-Weight (W)", f"{props['W']} kg/m", help="Section weight per unit length (used for net capacity deduction)")
     c4b.metric("Unbraced Length", f"{c['Lb']:.2f} m", help="Distance between lateral braces (Assumed equal to Span)")
     
     st.markdown("---")
@@ -178,7 +180,6 @@ def render_tab1(c, props, method, Fy, section):
     
     with st.expander("🔍 Show Formula Derivation (Aligned)"):
         st.markdown("#### 6.1 Shear $\leftrightarrow$ Moment Transition ($L_{v-m}$)")
-        # FIX: Added double braces {{ }} to escape LaTeX environment
         st.latex(rf"""
         \begin{{aligned}}
         w_s &= w_m \\
@@ -191,7 +192,6 @@ def render_tab1(c, props, method, Fy, section):
         st.divider()
 
         st.markdown("#### 6.2 Moment $\leftrightarrow$ Deflection Transition ($L_{m-d}$)")
-        # FIX: Added double braces {{ }} to escape LaTeX environment
         st.latex(rf"""
         \begin{{aligned}}
         w_m &= w_d \\
