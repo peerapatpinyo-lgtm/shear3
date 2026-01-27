@@ -1,10 +1,9 @@
-# tab1_details.py
 import streamlit as st
 
 def render_tab1(c, props, method, Fy, section):
     """
     Function to render Tab 1: Detailed Calculation Sheet
-    Matches perfectly with the updated calculator.py & database.py
+    Fixed to match updated calculator.py keys (ws_gross, ws_net, etc.)
     """
     
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
@@ -42,7 +41,7 @@ def render_tab1(c, props, method, Fy, section):
     c1b, c2b, c3b, c4b = st.columns(4)
     c1b.metric("Inertia (Ix)", f"{props['Ix']:,} cm4")
     
-    # FIX: Use calculated Zx from 'c' instead of 'props'
+    # Use calculated Zx from 'c'
     c2b.metric("Plastic Mod (Zx)", f"{c['Zx']:.1f} cm3", help="Calculated Plastic Modulus for Strength (Mp)")
     
     c3b.metric("Elastic Mod (Sx)", f"{c['Sx']:.1f} cm3", help="Elastic Modulus for Yield/Deflection")
@@ -74,7 +73,8 @@ def render_tab1(c, props, method, Fy, section):
         st.latex(rf"\therefore V_{{design}} = \mathbf{{{c['V_des']:,.0f}}} \text{{ kg}}")
     
     st.markdown("**Step 2.3: Safe Uniform Load (Gross) ($w_s$)**")
-    st.latex(rf"w_s = \frac{{2 \times {c['V_des']:,.0f}}}{{{c['L_cm']:.0f}}} \times 100 = \mathbf{{{c['ws']:,.0f}}} \text{{ kg/m}}")
+    # [FIX] Use ws_gross
+    st.latex(rf"w_s = \frac{{2 \times {c['V_des']:,.0f}}}{{{c['L_cm']:.0f}}} \times 100 = \mathbf{{{c['ws_gross']:,.0f}}} \text{{ kg/m}}")
     st.markdown("---")
 
     # === 3. MOMENT (WITH LTB) ===
@@ -122,7 +122,8 @@ def render_tab1(c, props, method, Fy, section):
         st.latex(rf"\therefore M_{{design}} = \mathbf{{{c['M_des']:,.0f}}} \text{{ kg-cm}}")
 
     st.markdown("**Step 3.4: Safe Uniform Load (Gross) ($w_m$)**")
-    st.latex(rf"w_m = \frac{{8 \times {c['M_des']:,.0f}}}{{{c['L_cm']:.0f}^2}} \times 100 = \mathbf{{{c['wm']:,.0f}}} \text{{ kg/m}}")
+    # [FIX] Use wm_gross
+    st.latex(rf"w_m = \frac{{8 \times {c['M_des']:,.0f}}}{{{c['L_cm']:.0f}^2}} \times 100 = \mathbf{{{c['wm_gross']:,.0f}}} \text{{ kg/m}}")
     st.markdown("---")
 
     # === 4. DEFLECTION ===
@@ -138,9 +139,9 @@ def render_tab1(c, props, method, Fy, section):
     
     st.latex(rf"w_d = \frac{{384 \times E \times I_x \times \delta_{{allow}}}}{{5 \times L^4}} \times 100")
     st.latex(rf"w_d = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,} \times {c['delta']:.2f}}}{{5 \times {c['L_cm']:.0f}^4}} \times 100")
-    st.latex(rf"\therefore w_d = \mathbf{{{c['wd']:,.0f}}} \text{{ kg/m}}")
+    # [FIX] Use wd_gross
+    st.latex(rf"\therefore w_d = \mathbf{{{c['wd_gross']:,.0f}}} \text{{ kg/m}}")
     
-    # FIX: Add Warning Caption
     st.caption("⚠️ **Note:** This calculated load ($w_d$) is a **Service Load (Unfactored)**. Do not apply load factors to this value.")
     
     st.markdown("---")
@@ -148,34 +149,17 @@ def render_tab1(c, props, method, Fy, section):
     # === 5. CONCLUSION ===
     st.subheader("5. Summary & Design Verification")
     
-    # FIX: Correct Logic for Net Load Calculation (Strength vs Service)
-    w_beam = props['W']
+    # [FIX] Retrieve NET values directly from calculator (Single Source of Truth)
+    net_shear_strength = c['ws_net']
+    net_moment_strength = c['wm_net']
+    net_deflection_service = c['wd_net']
     
-    if method == "LRFD":
-        # Strength Limit State: Subtract Factored Dead Load (1.2D)
-        factored_beam_weight = w_beam * 1.2
-        net_shear_strength = c['ws'] - factored_beam_weight
-        net_moment_strength = c['wm'] - factored_beam_weight
-        
-        # Service Limit State: Subtract Unfactored Dead Load (1.0D)
-        net_deflection_service = c['wd'] - w_beam
-        
-    else: # ASD
-        # Strength Limit State: Subtract Unfactored Dead Load (1.0D)
-        factored_beam_weight = w_beam * 1.0
-        net_shear_strength = c['ws'] - factored_beam_weight
-        net_moment_strength = c['wm'] - factored_beam_weight
-        
-        # Service Limit State: Subtract Unfactored Dead Load (1.0D)
-        net_deflection_service = c['wd'] - w_beam
-
-    # Ensure no negative values
+    # Ensure no negative values (calculator handles this, but safety check)
     net_shear_strength = max(0, net_shear_strength)
     net_moment_strength = max(0, net_moment_strength)
     net_deflection_service = max(0, net_deflection_service)
     
     # Calculate Governing Net Safe Load
-    # NOTE: We compare them to find the "Safe Superimposed Load" that satisfies ALL conditions.
     net_safe_load = min(net_shear_strength, net_moment_strength, net_deflection_service)
     
     # Determine governing case
@@ -198,9 +182,9 @@ def render_tab1(c, props, method, Fy, section):
         st.write(f"- Deflection Limit: {net_deflection_service:,.0f} kg/m")
         
         if method == "LRFD":
-            st.caption(f"⚠️ **Note (LRFD):** Shear/Moment limits have {factored_beam_weight:.1f} kg/m ($1.2D$) deducted. Deflection has {w_beam} kg/m ($1.0D$) deducted.")
+            st.caption(f"⚠️ **Note (LRFD):** Shear/Moment limits have {c['factored_dead_load']:.1f} kg/m ($1.2D$) deducted. Deflection has {props['W']} kg/m ($1.0D$) deducted.")
         else:
-            st.caption(f"ℹ️ **Note (ASD):** All limits have {w_beam} kg/m ($1.0D$) deducted.")
+            st.caption(f"ℹ️ **Note (ASD):** All limits have {props['W']} kg/m ($1.0D$) deducted.")
     
     with res_col2:
         st.success(f"✅ **Safe Net Superimposed Load:**")
@@ -237,6 +221,7 @@ def render_tab1(c, props, method, Fy, section):
         
         with c4:
             st.markdown("**Substitution:**")
+            # Calculate denom for display
             denom_val = 40 * c['M_des_full'] * limit_val
             st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{{denom_val:,.0f}}}")
             st.latex(rf"L = {c['L_md']*100:,.1f} \text{{ cm}}")
