@@ -4,11 +4,12 @@ from calculator import core_calculation
 
 # Import Modules
 from tab1_details import render_tab1
-from tab2_graph import render_tab2    # [NEW] Import Tab 2
+from tab2_graph import render_tab2
 from tab3_capacity import render_tab3
 from tab4_summary import render_tab4
-from tab5_saved import render_tab5
-from tab6_design import render_tab6
+from tab5_saved import render_tab5    # Timeline/List Analysis (Tab 5 เดิม)
+from tab6_design import render_tab6   # Manual Check
+from tab7_typical import render_tab7  # [NEW] Typical Detail Summary
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -39,20 +40,22 @@ c = core_calculation(L_input, Fy, E_gpa, props, method, def_val)
 final_w = min(c['ws'], c['wm'], c['wd'])
 
 # --- Display Tabs ---
-t1, t2, t3, t4, t5, t6 = st.tabs([
+# [UPDATE] เพิ่ม Tab 7
+t1, t2, t3, t4, t5, t6, t7 = st.tabs([
     "📝 Detail Report", 
     "📊 Behavior Graph", 
     "📋 Capacity Table",
     "📚 Master Catalog",
     "📊 Timeline Analysis",
-    "🛠️ Design Check"
+    "🛠️ Manual Check",
+    "🔩 Typical Detail" # [NEW] Tab 7
 ])
 
 # Render Tab 1: Details
 with t1:
     render_tab1(c, props, method, Fy, section)
 
-# Render Tab 2: Graph (เรียกใช้จากไฟล์ใหม่)
+# Render Tab 2: Graph
 with t2:
     render_tab2(c, props, section, L_input, def_val, final_w)
 
@@ -64,10 +67,14 @@ with t3:
 with t4:
     render_tab4(method, Fy, E_gpa, def_val)
 
-# Render Tab 5: Timeline
+# Render Tab 5: Timeline Analysis (Original Logic)
 with t5:
     render_tab5(method, Fy, E_gpa, def_val)
 
-# Render Tab 6: Design Check
+# Render Tab 6: Manual Connection Design
 with t6:
     render_tab6(method, Fy, E_gpa, def_val)
+
+# Render Tab 7: Typical Detail Summary (Auto Run 75%)
+with t7:
+    render_tab7(method, Fy, E_gpa, def_val)
