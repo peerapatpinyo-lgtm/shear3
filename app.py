@@ -8,8 +8,8 @@ from calculator import core_calculation
 from tab1_details import render_tab1
 from tab3_capacity import render_tab3
 from tab4_summary import render_tab4
-from tab5_saved import render_tab5   # Timeline Analysis
-from tab6_design import render_tab6  # [NEW] Design Check
+from tab5_saved import render_tab5    # Timeline Analysis
+from tab6_design import render_tab6   # [NEW] Design Check
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -47,7 +47,7 @@ t1, t2, t3, t4, t5, t6 = st.tabs([
     "📋 Capacity Table",
     "📚 Master Catalog",
     "📊 Timeline Analysis", # เปลี่ยนชื่อให้ตรงกับเนื้อหา (กราฟแท่ง Timeline)
-    "🛠️ Design Check"       # [NEW] Tab 6
+    "🛠️ Design Check"        # [NEW] Tab 6
 ])
 
 with t1:
