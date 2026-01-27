@@ -40,7 +40,8 @@ def render_tab1(c, props, method, Fy, section):
     
     c1b, c2b, c3b, c4b = st.columns(4)
     c1b.metric("Inertia (Ix)", f"{props['Ix']:,} cm4", help="Moment of Inertia around the X-axis")
-    c2b.metric("Plastic Mod (Zx)", f"{props['Zx']:,} cm3", help="Plastic Section Modulus")
+    # Using .get() for safety in case key is missing
+    c2b.metric("Plastic Mod (Zx)", f"{props.get('Zx', 0):,} cm3", help="Plastic Section Modulus")
     c3b.metric("Elastic Mod (Sx)", f"{c['Sx']:.1f} cm3", delta="Calculated", delta_color="off", help="Elastic Section Modulus (Ix / c)")
     c4b.metric("Unbraced Length", f"{c['Lb']:.2f} m", help="Distance between lateral braces (Assumed equal to Span)")
     
@@ -79,14 +80,11 @@ def render_tab1(c, props, method, Fy, section):
     with st.container(border=True):
         st.subheader("3. Moment Capacity Control (Include LTB)")
         
-        # 3.1 Check LTB Zone
         st.markdown("**Step 3.1: Check Lateral-Torsional Buckling (LTB) Zone**")
         
-        # Determining Zone visuals
         is_zone3 = "Zone 3" in c['Zone']
         zone_text = f"**{c['Zone']}**" if not is_zone3 else f"**:red[{c['Zone']} (Critical Elastic Buckling)]**"
         
-        # Layout for Zone Metrics and Status
         lz1, lz2, lz3 = st.columns([1, 1, 1.5])
         lz1.metric("Limit Lp (Yield)", f"{c['Lp']:.2f} m", help="Max length for full plastic capacity")
         lz2.metric("Limit Lr (Elastic)", f"{c['Lr']:.2f} m", help="Max length for inelastic buckling")
@@ -137,10 +135,10 @@ def render_tab1(c, props, method, Fy, section):
         st.latex(rf"\delta_{{allow}} = \frac{{{c['L_cm']:.0f}}}{{{limit_val}}} = \mathbf{{{c['delta']:.2f}}} \text{{ cm}}")
     
     with col_d2:
-        # Deflection Utilization Visualizer (Assuming we check against current capacity)
-        st.write("**Deflection Limit Capacity**")
-        st.progress(1.0, help="This bar represents the full 100% allowable limit reached by w_d")
-        st.caption(f"Max Allowable: {c['delta']:.2f} cm")
+        st.write("**Deflection Capacity**")
+        # Removed 'help' parameter from st.progress for compatibility
+        st.progress(1.0)
+        st.caption(f"Max Limit: {c['delta']:.2f} cm (Target)")
 
     st.markdown("**Step 4.1: Convert to Safe Uniform Load ($w_d$)**")
     st.latex(r"w_d = \frac{384 \cdot E \cdot I_x \cdot \delta_{allow}}{5 \cdot L^4} \times 100")
@@ -154,7 +152,6 @@ def render_tab1(c, props, method, Fy, section):
     final_w = min(c['ws'], c['wm'], c['wd'])
     net_w = max(0, final_w - props['W'])
     
-    # Comparison Table
     summary_data = [
         {"Limit State": "Shear Strength", "Capacity (kg/m)": f"{c['ws']:,.0f}", "Status": "Pass" if c['ws'] >= final_w else "-"},
         {"Limit State": f"Moment ({c['Zone']})", "Capacity (kg/m)": f"{c['wm']:,.0f}", "Status": "Pass" if c['wm'] >= final_w else "-"},
@@ -169,21 +166,19 @@ def render_tab1(c, props, method, Fy, section):
     res_col1, res_col2 = st.columns(2)
     with res_col1:
         st.info(f"**Governing Case:** {ctrl}")
-        st.write(f"The maximum total load the beam can support is limited by **{ctrl}**.")
+        st.write(f"The maximum total load is limited by **{ctrl}**.")
     
     with res_col2:
         st.success(f"✅ **Safe Net Load Capacity:**")
         st.metric(label="Net Load (Excluding Self-Weight)", value=f"{net_w:,.0f} kg/m")
-        st.caption(f"*Beam self-weight {props['W']} kg/m already deducted.")
+        st.caption(f"*Beam self-weight {props['W']} kg/m deducted.")
 
     st.markdown("---")
 
     # === 6. TRANSITION DERIVATION ===
     st.subheader("6. Derivation of Critical Lengths")
-    st.caption("Calculating the transition points where failure modes switch.")
-
+    
     with st.expander("🔍 Show Formula Derivation (Aligned)"):
-        # CASE 1: Shear vs Moment
         st.markdown("#### 6.1 Shear $\leftrightarrow$ Moment Transition ($L_{v-m}$)")
         st.latex(rf"""
         \begin{aligned}
@@ -196,14 +191,13 @@ def render_tab1(c, props, method, Fy, section):
 
         st.divider()
 
-        # CASE 2: Moment vs Deflection
         st.markdown("#### 6.2 Moment $\leftrightarrow$ Deflection Transition ($L_{m-d}$)")
         st.latex(rf"""
         \begin{aligned}
         w_m &= w_d \\
         \frac{{8 \cdot M_{{des}}}}{{L^2}} &= \frac{{384 \cdot E \cdot I \cdot (L/{limit_val})}}{{5 \cdot L^4}} \\
         L^2 &= \frac{{384 \cdot E \cdot I}}{{40 \cdot M_{{des}} \cdot {limit_val}}} \\
-        L_{{m-d}} &= \sqrt{{\frac{{384 \cdot {c['E_ksc']:,.0f} \cdot {props['Ix']:,}}}{{40 \cdot {c['M_des_full']:,.0f} \cdot {limit_val}}}}} = \mathbf{{{c['L_md']:.2f}}} \text{{ m}}
+        L_{{m-d}} &= \sqrt{{\frac{{384 \cdot {c['E_ksc']:,.0f} \cdot {props['Ix']:,} \cdot 100}}{{40 \cdot {c['M_des_full']:,.0f} \cdot {limit_val}}}}} = \mathbf{{{c['L_md']:.2f}}} \text{{ m}}
         \end{aligned}
         """)
 
