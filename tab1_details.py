@@ -76,51 +76,55 @@ def render_tab1(c, props, method, Fy, section):
     st.markdown("---")
 
     # === 3. MOMENT (WITH LTB) ===
-    st.subheader("3. Moment Capacity Control (Include LTB)")
-    
-    # 3.1 Check LTB Zone
-    st.markdown("**Step 3.1: Check Lateral-Torsional Buckling (LTB) Zone**")
-    st.write("Determine the unbraced length ($L_b$) zone:")
-    
-    lz1, lz2, lz3 = st.columns(3)
-    lz1.metric("Limit Lp (Yield)", f"{c['Lp']:.2f} m", help="Zone 1 Limit")
-    lz2.metric("Limit Lr (Elastic)", f"{c['Lr']:.2f} m", help="Zone 2 Limit")
-    
-    # Color condition for Zone
-    if "Zone 1" in c['Zone']: z_color = "green"
-    elif "Zone 2" in c['Zone']: z_color = "orange"
-    else: z_color = "red"
-    
-    lz3.markdown(f"Current State:\n\n:{z_color}[**{c['Zone']}**]")
-    
-    if c['Lb'] <= c['Lp']:
-        st.success(f"✅ Full Plastic Moment Capacity ($L_b \le L_p$)")
-    elif c['Lb'] <= c['Lr']:
-        st.warning(f"⚠️ Inelastic Buckling Zone ($L_p < L_b \le L_r$). Capacity Reduced.")
-    else:
-        st.error(f"🛑 Elastic Buckling Zone ($L_b > L_r$). Capacity Significantly Reduced.")
-    
-    col_m1, col_m2 = st.columns([1, 1])
-    
-    with col_m1:
-        st.markdown("**Step 3.2: Nominal Moment Strength ($M_n$)**")
-        st.write(f"- $M_p$ (Plastic Limit) = {c['Mp']:,.0f} kg-cm")
-        st.write(f"- $M_n$ (Calculated with LTB) = {c['Mn']:,.0f} kg-cm")
-        st.latex(rf"\therefore M_n = \mathbf{{{c['Mn']:,.0f}}} \text{{ kg-cm}}")
+    with st.container(border=True):
+        st.subheader("3. Moment Capacity Control (Include LTB)")
         
-    with col_m2:
-        st.markdown("**Step 3.3: Design Moment Strength ($M_{design}$)**")
-        st.latex(c['txt_m_method'])
-        if method == "ASD":
-             st.write(f"Using Safety Factor $\Omega_b = {c['omega_b']:.2f}$ (AISC ASD)")
-             st.latex(rf"M_{{design}} = \frac{{{c['Mn']:,.0f}}}{{{c['omega_b']:.2f}}}")
-        else:
-             st.write(f"Using Resistance Factor $\phi_b = {c['phi_b']:.2f}$ (AISC LRFD)")
-             st.latex(rf"M_{{design}} = {c['phi_b']:.2f} \times {c['Mn']:,.0f}")
-        st.latex(rf"\therefore M_{{design}} = \mathbf{{{c['M_des']:,.0f}}} \text{{ kg-cm}}")
+        # 3.1 Check LTB Zone
+        st.markdown("**Step 3.1: Check Lateral-Torsional Buckling (LTB) Zone**")
+        
+        # Determining Zone visuals
+        is_zone3 = "Zone 3" in c['Zone']
+        zone_text = f"**{c['Zone']}**" if not is_zone3 else f"**:red[{c['Zone']} (Critical Elastic Buckling)]**"
+        
+        # Layout for Zone Metrics and Status
+        lz1, lz2, lz3 = st.columns([1, 1, 1.5])
+        lz1.metric("Limit Lp (Yield)", f"{c['Lp']:.2f} m", help="Max length for full plastic capacity")
+        lz2.metric("Limit Lr (Elastic)", f"{c['Lr']:.2f} m", help="Max length for inelastic buckling")
+        
+        with lz3:
+            if "Zone 1" in c['Zone']:
+                st.success(f"**Current State:** {zone_text}")
+                st.caption("✅ $L_b \le L_p$: Full Plastic Capacity")
+            elif "Zone 2" in c['Zone']:
+                st.warning(f"**Current State:** {zone_text}")
+                st.caption("⚠️ $L_p < L_b \le L_r$: Inelastic Buckling")
+            else:
+                st.error(f"**Current State:** {zone_text}")
+                st.caption("🛑 $L_b > L_r$: Elastic Buckling (High Reduction)")
 
-    st.markdown("**Step 3.4: Safe Uniform Load ($w_m$)**")
-    st.latex(rf"w_m = \frac{{8 \times {c['M_des']:,.0f}}}{{{c['L_cm']:.0f}^2}} \times 100 = \mathbf{{{c['wm']:,.0f}}} \text{{ kg/m}}")
+        st.divider()
+
+        col_m1, col_m2 = st.columns(2)
+        
+        with col_m1:
+            st.markdown("**Step 3.2: Nominal Moment Strength ($M_n$)**")
+            st.write(f"- $M_p$ (Plastic Limit) = {c['Mp']:,.0f} kg-cm")
+            st.write(f"- $M_n$ (with LTB check) = {c['Mn']:,.0f} kg-cm")
+            st.latex(rf"\therefore M_n = \mathbf{{{c['Mn']:,.0f}}} \text{{ kg-cm}}")
+            
+        with col_m2:
+            st.markdown("**Step 3.3: Design Moment Strength ($M_{design}$)**")
+            st.latex(c['txt_m_method'])
+            if method == "ASD":
+                 st.write(f"$\Omega_b = {c['omega_b']:.2f}$ | $M_{{design}} = M_n / \Omega_b$")
+            else:
+                 st.write(f"$\phi_b = {c['phi_b']:.2f}$ | $M_{{design}} = \phi_b \times M_n$")
+            st.latex(rf"\therefore M_{{design}} = \mathbf{{{c['M_des']:,.0f}}} \text{{ kg-cm}}")
+
+        st.divider()
+        st.markdown("**Step 3.4: Safe Uniform Load ($w_m$)**")
+        st.latex(rf"w_m = \frac{{8 \times {c['M_des']:,.0f}}}{{{c['L_cm']:.0f}^2}} \times 100 = \mathbf{{{c['wm']:,.0f}}} \text{{ kg/m}}")
+
     st.markdown("---")
 
     # === 4. DEFLECTION ===
