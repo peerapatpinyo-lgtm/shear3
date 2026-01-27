@@ -6,15 +6,12 @@ from database import SYS_H_BEAMS
 from calculator import core_calculation
 
 # Import Tabs
+# (ตรวจสอบให้แน่ใจว่าคุณมีไฟล์ tab1 ถึง tab6 อยู่ในโฟลเดอร์เดียวกัน)
 from tab1_details import render_tab1
-#from tab3_capacity import render_tab3 
-#from tab4_summary import render_tab4
-#from tab5_saved import render_tab5
-#from tab6_design import render_tab6
-
-# Note: Comment out tabs that you haven't created yet to prevent errors
-# For now, I will use placeholders for missing tabs if you run this alone.
-def render_placeholder(): st.info("This module is under construction.")
+from tab3_capacity import render_tab3 
+from tab4_summary import render_tab4
+from tab5_saved import render_tab5
+from tab6_design import render_tab6
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -70,6 +67,7 @@ with t2:
     st.caption(f"Graph Condition: Unbraced Length (Lb) = Span Length | Deflection: L/{def_val}")
     
     # --- Engineering Fix: Dynamic Curve Calculation ---
+    # Logic นี้ถูกต้องแล้วครับ คือการวน Loop คำนวณจริงทุกระยะ
     L_max = max(15, L_input*1.5)
     x_vals = np.linspace(0.5, L_max, 100) # 100 points
     
@@ -94,7 +92,7 @@ with t2:
     
     # Plot Governing Area
     fig.add_trace(go.Scatter(x=x_vals, y=y_gov, fill='tozeroy', fillcolor='rgba(100,100,100,0.1)', 
-                             line=dict(color='rgba(0,0,0,0)'), showlegend=False))
+                             line=dict(color='rgba(0,0,0,0)'), showlegend=False, hoverinfo='skip'))
     
     # Plot Limit Lines
     fig.add_trace(go.Scatter(x=x_vals, y=y_shear, name='Shear Limit', line=dict(color='#d9534f', dash='dash')))
@@ -116,8 +114,16 @@ with t2:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# Placeholder for other tabs (Open these when you have the files)
-with t3: render_placeholder() #render_tab3(props, method, Fy, E_gpa, section, def_val)
-with t4: render_placeholder() #render_tab4(method, Fy, E_gpa, def_val)
-with t5: render_placeholder() #render_tab5(method, Fy, E_gpa, def_val)
-with t6: render_placeholder() #render_tab6(method, Fy, E_gpa, def_val, section, L_input)
+# --- Restored Tabs (Fully Functional) ---
+with t3: 
+    render_tab3(props, method, Fy, E_gpa, section, def_val)
+
+with t4: 
+    render_tab4(method, Fy, E_gpa, def_val)
+
+with t5: 
+    render_tab5(method, Fy, E_gpa, def_val)
+
+with t6: 
+    # Update: ส่ง section และ L_input เข้าไปด้วย เพื่อป้องกัน Error
+    render_tab6(method, Fy, E_gpa, def_val, section, L_input)
