@@ -5,12 +5,16 @@ import plotly.graph_objects as go
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
-# Import Tabs (Assuming these files exist and handle the dictionary correctly)
+# Import Tabs
 from tab1_details import render_tab1
-from tab3_capacity import render_tab3
-from tab4_summary import render_tab4
-from tab5_saved import render_tab5
-from tab6_design import render_tab6
+#from tab3_capacity import render_tab3 
+#from tab4_summary import render_tab4
+#from tab5_saved import render_tab5
+#from tab6_design import render_tab6
+
+# Note: Comment out tabs that you haven't created yet to prevent errors
+# For now, I will use placeholders for missing tabs if you run this alone.
+def render_placeholder(): st.info("This module is under construction.")
 
 # --- Config ---
 st.set_page_config(page_title="SYS Structural Report", layout="wide")
@@ -63,34 +67,26 @@ with t1: render_tab1(c, props, method, Fy, section)
 
 with t2:
     st.subheader(f"📈 Net Capacity Envelope: {section}")
-    st.caption(f"Lb Used = {c['Lb_used']:.2f} m | Deflection Limit: L/{def_val} | Values are NET Safe Load (Beam Weight Deducted)")
-
-    # --- Engineering Fix: Dynamic Curve Calculation ---
-    # We must calculate the actual Moment Capacity at each span length to plot the curve correctly,
-    # because Mn depends on Lb (which equals Span in this simple envelope check).
+    st.caption(f"Graph Condition: Unbraced Length (Lb) = Span Length | Deflection: L/{def_val}")
     
+    # --- Engineering Fix: Dynamic Curve Calculation ---
     L_max = max(15, L_input*1.5)
-    x_vals = np.linspace(0.5, L_max, 100) # 100 points for smoothness
+    x_vals = np.linspace(0.5, L_max, 100) # 100 points
     
     y_shear = []
     y_moment = []
     y_defl = []
     
-    w_beam = props['W']
-    
     for x_span in x_vals:
-        # Calculate Capacity for this specific span (Assuming Lb = L_span for the graph envelope)
-        # We use a lightweight call or full call. 
-        # Note: If user specified fixed Lb, we should respect that, but usually envelope implies Lb=L varies.
-        # Here we assume Lb varies with Span for the general capacity curve unless fixed Lb is physically braced.
-        # For safety/standard envelope, we usually assume Lb = Span.
-        
+        # Calculate Capacity for this specific span
+        # Note: We assume Lb = Span for the general envelope curve
         sim_c = core_calculation(x_span, Fy, E_gpa, props, method, def_val, Lb_m=x_span)
         
-        # Net loads
-        y_shear.append(max(0, sim_c['ws'] - w_beam))
-        y_moment.append(max(0, sim_c['wm'] - w_beam))
-        y_defl.append(max(0, sim_c['wd'] - w_beam))
+        # FIX: Use the 'net' values directly from calculator.
+        # This ensures 1.2D is subtracted for LRFD and 1.0D for ASD automatically.
+        y_shear.append(sim_c['ws_net'])
+        y_moment.append(sim_c['wm_net'])
+        y_defl.append(sim_c['wd_net'])
 
     y_gov = np.minimum(np.minimum(y_shear, y_moment), y_defl)
     
@@ -109,10 +105,10 @@ with t2:
     # Plot Current Design Point
     fig.add_trace(go.Scatter(x=[L_input], y=[final_w_net], mode='markers+text', 
                              marker=dict(size=14, color='blue', symbol='diamond'),
-                             text=[f"{final_w_net:,.0f} kg/m"], textposition="top right", name='Your Design'))
+                             text=[f"{final_w_net:,.0f}"], textposition="top right", name='Your Design'))
     
     fig.update_layout(
-        title=f"Allowable Net Uniform Load vs Span ({section})", 
+        title=f"Allowable Net Uniform Load vs Span ({section}) [{method}]", 
         xaxis_title="Span Length (m)",
         yaxis_title="Safe Superimposed Load (kg/m)",
         height=500, template="plotly_white",
@@ -120,7 +116,8 @@ with t2:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-with t3: render_tab3(props, method, Fy, E_gpa, section, def_val)
-with t4: render_tab4(method, Fy, E_gpa, def_val)
-with t5: render_tab5(method, Fy, E_gpa, def_val)
-with t6: render_tab6(method, Fy, E_gpa, def_val, section, L_input)
+# Placeholder for other tabs (Open these when you have the files)
+with t3: render_placeholder() #render_tab3(props, method, Fy, E_gpa, section, def_val)
+with t4: render_placeholder() #render_tab4(method, Fy, E_gpa, def_val)
+with t5: render_placeholder() #render_tab5(method, Fy, E_gpa, def_val)
+with t6: render_placeholder() #render_tab6(method, Fy, E_gpa, def_val, section, L_input)
