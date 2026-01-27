@@ -8,7 +8,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # 1. Unit Conversion
     L = L_m * 100       # m -> cm (Total Span)
     
-    # Handle Unbraced Length
+    # Handle Unbraced Length (Lb)
     if Lb_m is None:
         Lb = L          # Default: Unbraced length = Span
     else:
@@ -16,37 +16,40 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         
     E = E_gpa * 10000   # GPa -> ksc
     
-    # --- [FIX 1] Robust Property Extraction (แก้ KeyError: Sx) ---
+    # --- [Step 1] Robust Property Extraction ---
+    # ดึงค่าพื้นฐาน
     D = props['D']
     Ix = props['Ix']
     
-    # 1. หา Sx (Elastic Modulus): ถ้าไม่มีใน DB ให้คำนวณเอง
+    # 1.1 หา Sx (Elastic Modulus): ถ้าไม่มีใน DB ให้คำนวณจาก Ix / (D/2)
     if 'Sx' in props:
         Sx = props['Sx']
     else:
         Sx = Ix / (D / 2)
         
-    # 2. หา Zx (Plastic Modulus): ถ้าไม่มี ให้ประมาณค่า
+    # 1.2 หา Zx (Plastic Modulus): ถ้าไม่มี ให้ประมาณค่า
     if 'Zx' in props:
         Zx = props['Zx']
     else:
         Zx = 1.12 * Sx
 
-    # 3. ดึงค่าอื่นๆ พร้อมตัวแปรสำรอง
+    # 1.3 ดึงค่าอื่นๆ พร้อมตัวแปรสำรอง (Fallback)
     ry = props.get('ry', props.get('B', 10)/4) 
     t1 = props['tw']
     t2 = props['tf']
     bf = props['B']
     r = props.get('r', 0) 
     h = D - 2*t2 - 2*r    
+    
+    # Torsional Constant (J)
     J = props.get('J', 0.4 * (bf*t2**3 + (D-t2)*t1**3)) 
     
-    # --- 2. Shear Capacity (Vn) ---
+    # --- [Step 2] Shear Capacity (Vn) ---
     Aw = D * t1
-    Cv = 1.0 
+    Cv = 1.0 # For rolled shapes
     Vn = 0.6 * Fy * Aw * Cv
     
-    # --- 3. Moment Capacity (Mn) ---
+    # --- [Step 3] Moment Capacity (Mn) ---
     Mp = Fy * Zx
     Lp = 1.76 * ry * math.sqrt(E/Fy)
     
@@ -58,7 +61,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     ho = D - t2
     c_const = 1.0
     
-    # Lr Calculation
+    # Lr Calculation (AISC F2)
     term_sqrt = math.sqrt(((J*c_const)/(Sx*ho))**2 + 6.76*((0.7*Fy)/E)**2)
     Lr = 1.95 * rts * (E/(0.7*Fy)) * math.sqrt((J*c_const)/(Sx*ho) + term_sqrt)
 
@@ -77,7 +80,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         
     Mn = min(Mp, Mn_ltb)
     
-    # --- 4. Apply Safety Factors ---
+    # --- [Step 4] Apply Safety Factors ---
     if method == "ASD":
         Omega_v = 1.50 
         Omega_b = 1.67
@@ -89,40 +92,50 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         V_des = Phi_v * Vn
         M_des = Phi_b * Mn
 
-    # --- 5. Convert to Distributed Load (w) ---
+    # --- [Step 5] Convert to Distributed Load (w) ---
+    # Shear Control: w = 2V/L
     w_shear = (2 * V_des) / (L/100) 
+    
+    # Moment Control: w = 8M/L^2
     w_moment = (8 * M_des) / ((L/100)**2)
     
+    # Deflection Control
     delta_allow = L / def_limit
     w_defl = (delta_allow * 384 * E * Ix) / (5 * L**4)
     
-    # --- [FIX 2] Calculate Transition Points (m) for Tab 4 & Graphs ---
-    # จุดที่ Shear = Moment -> 2V/L = 8M/L^2 -> L = 4M/V
-    # หน่วย: M(kg-cm), V(kg) -> L(cm) -> convert to m
+    # --- [Step 6] Calculate Transition Points (for Tab 4 & Graph) ---
     if V_des > 0:
         L_vm_val = (4 * M_des / V_des) / 100 
     else: 
         L_vm_val = 0
         
-    # จุดที่ Moment = Deflection -> 8M/L^2 = K/L^3 -> L = K/8M
-    # K for deflection w = K/L^3 -> K = (384 E I / 5) / Ratio
     K_defl = (384 * E * Ix) / (5 * def_limit) 
     if M_des > 0:
         L_md_val = (K_defl / (8 * M_des)) / 100
     else:
         L_md_val = 0
     
+    # --- [IMPORTANT] Return Dictionary with ALL Keys ---
     return {
+        # Results
         'ws': w_shear,
         'wm': w_moment,
         'wd': w_defl,
         'V_des': V_des,
         'M_des': M_des,
-        'L_vm': L_vm_val, # Critical Length Shear-Moment (m)
-        'L_md': L_md_val, # Critical Length Moment-Deflection (m)
+        
+        # Graph Limits
+        'L_vm': L_vm_val, 
+        'L_md': L_md_val, 
+        
+        # Material & Geometry
         'E_ksc': E,
-        'Lb_used': Lb/100,
-        'L_cm': L,      # [FIX 3] Added missing key required by tab1
-        'Ix': Ix,       # Pass prop back if needed
-        'Sx': Sx
+        'L_cm': L,             # <-- Required by tab1_details.py (Line 19)
+        'Lb': Lb / 100,        # <-- Required by tab1_details.py (Line 45) [Unit: m]
+        'Lb_used': Lb / 100,   # <-- Required by app.py (for caption) [Unit: m]
+        
+        # Section Properties (returned for display consistency)
+        'Ix': Ix,
+        'Sx': Sx,
+        'Zx': Zx
     }
