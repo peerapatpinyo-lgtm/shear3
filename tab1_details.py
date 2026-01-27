@@ -3,12 +3,12 @@ import streamlit as st
 def render_tab1(c, props, method, Fy, section):
     """
     Function to render Tab 1: Detailed Calculation Sheet
-    Updated to support dynamic Deflection Limit (L/180, L/240, L/360)
+    Matches perfectly with the updated calculator.py
     """
     
     st.markdown(f"### 📄 Engineering Report: {section} ({method})")
     
-    # === [NEW] DATA SOURCE TRACING ===
+    # === DATA SOURCE TRACING ===
     with st.expander("ℹ️ Data Sources & Input Parameters", expanded=False):
         ds_c1, ds_c2 = st.columns(2)
         with ds_c1:
@@ -123,7 +123,6 @@ def render_tab1(c, props, method, Fy, section):
     # === 4. DEFLECTION ===
     st.subheader("4. Deflection Control")
     
-    # [UPDATED Logic] Fetch selected Limit
     limit_val = c.get('def_limit', 360) 
     
     st.write(f"Allowable Deflection Limit (**L/{limit_val}**):")
@@ -175,24 +174,21 @@ def render_tab1(c, props, method, Fy, section):
             st.latex(r"L = \frac{4 M_{full}}{V_{design}}")
         with c2:
             st.markdown("**Substitution:**")
-            # Using M_des_full to ensure consistency with the table
             st.latex(rf"L = \frac{{4 \times {c['M_des_full']:,.0f}}}{{{c['V_des']:,.0f}}} = {c['L_vm']*100:,.1f} \text{{ cm}}")
             st.success(f"= {c['L_vm']:.2f} m")
 
         st.markdown("---")
 
-        # CASE 2: Moment vs Deflection (UPDATED Dynamic Formula)
+        # CASE 2: Moment vs Deflection
         st.markdown("#### 6.2 Moment $\leftrightarrow$ Deflection Transition ($L_{m-d}$)")
         c3, c4 = st.columns(2)
         with c3:
             st.markdown("**Setup Equation:**")
             st.write(f"Equating Moment ($w_m$) and Deflection ($w_d$) at $L/{limit_val}$:")
-            # Using M_full in formula
             st.latex(rf"L = \frac{{384 E I}}{{40 \times M_{{full}} \times {limit_val}}}")
         
         with c4:
             st.markdown("**Substitution:**")
-            # Using M_des_full to ensure consistency with the table
             denom_val = 40 * c['M_des_full'] * limit_val
             st.latex(rf"L = \frac{{384 \times {c['E_ksc']:,.0f} \times {props['Ix']:,}}}{{{denom_val:,.0f}}}")
             st.latex(rf"L = {c['L_md']*100:,.1f} \text{{ cm}}")
