@@ -13,7 +13,10 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     else:
         Lb = Lb_m * 100  # m -> cm
         
-    E = E_gpa * 10000    # GPa -> ksc
+    # FIX: Precision Conversion GPa -> ksc
+    # 1 GPa = 1019.716 kg/cm^2 approx. (Using 10197.16 for 10 GPa scale is safer or exact factor)
+    # Standard Structural Steel E is approx 2.04e6 ksc.
+    E = E_gpa * 10197.16    # GPa -> ksc (Corrected from 10000)
     
     # Extract & Convert Properties (mm -> cm)
     D = props['D'] / 10.0
@@ -26,14 +29,17 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     Ix = props['Ix']
     Iy = props['Iy']
     Sx = props['Sx']
-    Zx = props['Zx']
+    Zx = props.get('Zx', Sx*1.1) # Fallback if Zx not calculated yet (though database.py fixes this)
     A = props['A']
-    ry = props['ry'] # Used for LTB (Lp) calculation logic if needed, but we use approximation or exact formula
+    ry = props['ry'] 
     
     # Geometric derived properties
     h = D - 2*tf - 2*r  # Clear distance between fillets (cm)
     ho = D - tf         # Distance between flange centroids (cm)
+    
+    # NOTE: Torsional Constant (J) Approximation for Open Sections
     J = props.get('J', 0.4 * (B*tf**3 + (D-tf)*tw**3)) 
+    
     Cw = (Iy * ho**2) / 4
     rts = math.sqrt(math.sqrt(Iy * Cw) / Sx)
 
@@ -69,7 +75,7 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         Mn_web = Mp_base
     else:
         # Simplified reduction for non-compact web
-        Mn_web = Mp_base # Most standard H-beams are compact web. 
+        Mn_web = Mp_base 
         # Full logic for slender web is complex, assuming compact/non-compact for standard JIS.
 
     # Actual Mp is limited by local buckling
@@ -123,7 +129,9 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # --- 5. Apply Method Factors (ASD/LRFD) ---
     omega_v = 1.50
     omega_b = 1.67
-    phi_v = 1.00
+    
+    # NOTE: phi_v = 1.00 is per AISC G2.1(a) for rolled I-shapes with h/tw <= 2.24 sqrt(E/Fy)
+    phi_v = 1.00 
     phi_b = 0.90
     
     if method == "ASD":
@@ -149,6 +157,25 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
     # Beam Weight (kg/m)
     w_beam = props['W']
     
+    # --- CRITICAL FIX: Net Load Logic (ASD vs LRFD) ---
+    if method == "LRFD":
+        # For LRFD: Capacity is Factored (Wu). 
+        # We must subtract Factored Dead Load (1.2 * BeamWeight) to get Safe Net Load.
+        w_beam_factored = 1.2 * w_beam
+        
+        ws_net = max(0, w_shear - w_beam_factored)
+        wm_net = max(0, w_moment - w_beam_factored)
+        
+        # Deflection is a SERVICEABILITY check (Unfactored Loads).
+        # Standard practice: Check deflection against (D+L) service load.
+        # So we subtract unfactored beam weight.
+        wd_net = max(0, w_defl - w_beam) 
+    else:
+        # ASD: Capacity is Allowable (Wa). Subtract Unfactored Beam Weight.
+        ws_net = max(0, w_shear - w_beam)
+        wm_net = max(0, w_moment - w_beam)
+        wd_net = max(0, w_defl - w_beam)
+
     # --- 7. Transition Points ---
     if V_des > 0:
         L_vm_val = (4 * M_des / V_des) / 100 
@@ -195,9 +222,9 @@ def core_calculation(L_m, Fy, E_gpa, props, method="ASD", def_limit=360, Lb_m=No
         
         # Net Load Calculation (Important!)
         'w_beam': w_beam,
-        'ws_net': max(0, w_shear - w_beam),
-        'wm_net': max(0, w_moment - w_beam),
-        'wd_net': max(0, w_defl - w_beam),
+        'ws_net': ws_net,
+        'wm_net': wm_net,
+        'wd_net': wd_net,
         
         # Transitions
         'L_vm': L_vm_val, 'L_md': L_md_val
