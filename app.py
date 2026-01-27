@@ -1,15 +1,14 @@
-# app.py
+# app.py (Updated: Correct Imports)
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from database import SYS_H_BEAMS
 from calculator import core_calculation
 
-# Import Tabs
-# (ตรวจสอบให้แน่ใจว่าคุณมีไฟล์ tab1 ถึง tab6 อยู่ในโฟลเดอร์เดียวกัน)
-from tab1_details import render_tab1
-from tab3_capacity import render_tab3 
-from tab4_summary import render_tab4
+# --- ✅ FIX: Imports matching your sent files ---
+from tab1_setup import render_tab1       # เดิม tab1_details
+from tab3_member import render_tab3      # เดิม tab3_capacity
+from tab4_optimized import render_tab4   # เดิม tab4_summary
 from tab5_saved import render_tab5
 from tab6_design import render_tab6
 
@@ -66,8 +65,7 @@ with t2:
     st.subheader(f"📈 Net Capacity Envelope: {section}")
     st.caption(f"Graph Condition: Unbraced Length (Lb) = Span Length | Deflection: L/{def_val}")
     
-    # --- Engineering Fix: Dynamic Curve Calculation ---
-    # Logic นี้ถูกต้องแล้วครับ คือการวน Loop คำนวณจริงทุกระยะ
+    # --- Dynamic Curve Calculation ---
     L_max = max(15, L_input*1.5)
     x_vals = np.linspace(0.5, L_max, 100) # 100 points
     
@@ -81,7 +79,6 @@ with t2:
         sim_c = core_calculation(x_span, Fy, E_gpa, props, method, def_val, Lb_m=x_span)
         
         # FIX: Use the 'net' values directly from calculator.
-        # This ensures 1.2D is subtracted for LRFD and 1.0D for ASD automatically.
         y_shear.append(sim_c['ws_net'])
         y_moment.append(sim_c['wm_net'])
         y_defl.append(sim_c['wd_net'])
@@ -114,16 +111,18 @@ with t2:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# --- Restored Tabs (Fully Functional) ---
+# --- Render Tabs ---
 with t3: 
+    # ใช้ render_tab3 จาก tab3_member.py
     render_tab3(props, method, Fy, E_gpa, section, def_val)
 
 with t4: 
+    # ใช้ render_tab4 จาก tab4_optimized.py
     render_tab4(method, Fy, E_gpa, def_val)
 
 with t5: 
     render_tab5(method, Fy, E_gpa, def_val)
 
 with t6: 
-    # Update: ส่ง section และ L_input เข้าไปด้วย เพื่อป้องกัน Error
+    # ส่ง section และ L_input เข้าไปด้วยตาม Logic ใหม่
     render_tab6(method, Fy, E_gpa, def_val, section, L_input)
